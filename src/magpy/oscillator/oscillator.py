@@ -7,9 +7,6 @@ Tensorified version of nufast:
 from enum import Enum
 
 import torch
-import numpy as np
-
-from magpy.utils.device_manager import DeviceManager
 from magpy.Exceptions import MagpyProbabilityException
 
 

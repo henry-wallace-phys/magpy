@@ -1,8 +1,6 @@
 from typing import List, Dict, Optional
 
 from dataclasses import dataclass
-from magpy.objects.spline_handler import SplineMonolith
-from magpy.objects.mc_event import MCEventMonolith
 
 
 @dataclass
