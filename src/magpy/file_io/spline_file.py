@@ -25,29 +25,31 @@ class SplineFile(RootFile):
         print(f"Loading spline file: {file_path}")
         super().__init__(file_path)
 
-        self.systematic_names = [
-            key.rstrip("/").rstrip(";")
-            for key in self.file.keys()
-            if isinstance(self.file[key], uproot.ReadOnlyDirectory)
-        ]
+        # self.systematic_names = [
+        #     key.rstrip("/").rstrip(";")
+        #     for key in self.file.keys()
+        #     if isinstance(self.file[key], uproot.ReadOnlyDirectory)
+        # ]
         print("Extracting splines")
-
-        self._n_systs = len(self.systematic_names)
-
         # We now convert the TGraphs to CubicSpline objects
         spline_array = []
+        self._spline_names = []
+        for graph_name in tqdm(self.file.keys(), desc="Systematic"):
+            gr = self.file[graph_name]
 
-        for syst in tqdm(
-            self.systematic_names,
-            total=len(self.systematic_names),
-            desc="Loading splines",
-        ):
-            for spline in self.file[syst].values():
-                x, y = spline.values()
+            try:
+                x, y = gr.values()
                 spline_array.append(Spline(torch.tensor(x), torch.tensor(y)))
+                self._spline_names.append(graph_name)
+            except Exception:
+                continue
 
         self._monolith = SplineMonolith(spline_array)
 
     @property
     def monolith(self):
         return self._monolith
+
+    @property
+    def spline_names(self):
+        return self._spline_names
