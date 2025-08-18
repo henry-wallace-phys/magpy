@@ -35,15 +35,3 @@ jobs:
           name: benchmark-results
           path: benchmarks/results
 
-      - name: Store benchmark result
-        uses: benchmark-action/github-action-benchmark@v1
-        with:
-          tool: 'catch2' # Specify that the benchmark tool is Catch2
-          output-file-path: benchmarks # Path to the benchmark output file
-          comment-on-alert: true
-          gh-pages-branch: gh-pages # Branch to store benchmark results
-          summary-always: true # Always show summary in job logs
-          fail-on-alert: false # Do not fail the workflow on alert
-          benchmark-data-dir-path: "" # Use ROOT directory
-          # Push and deploy GitHub pages branch automatically, only if type isn't PR
-          auto-push: ${{ github.event_name != 'pull_request' }}     
