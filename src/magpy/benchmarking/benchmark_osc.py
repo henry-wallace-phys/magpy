@@ -100,6 +100,8 @@ def plot_scaling(times: np.ndarray, scales: np.ndarray, plot_file="osc_scaling.p
     # Now we do times/scale
     plt.figure()
     plt.plot(scales, mean_times / scales * 1_000_000, label="Mean Time per Scale [μs]")
+    plt.xlabel("Time/Event [μs]")
+    plt.ylabel("Number of Events")
     plt.title("Mean Time per Event")
     plt.grid()
 
