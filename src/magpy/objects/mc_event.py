@@ -13,6 +13,7 @@ class MCEventIndices(Enum):
     INTERACTION_MODE = 3
     START_NU = 4
     END_NU = 5
+    WEIGHT = 6
 
 @dataclass
 class MCEvent:
@@ -31,7 +32,8 @@ class MCEvent:
             self.reco_neutrino_energy,
             self.interaction_mode,
             self.start_nu,
-            self.end_nu
+            self.end_nu,
+            0.0  # Placeholder for weight, can be set later
         ], dtype=torch.float32)
 
 class MCEventMonolith:

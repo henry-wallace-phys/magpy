@@ -17,4 +17,4 @@ class MagpySample:
         
         # Set up kinematic handlers
         self._kinematic_bins = [KinematicBinning(name, torch.tensor(binning)) for name, binning in self.binning.items()]
-
+        
