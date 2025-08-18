@@ -1,0 +1,49 @@
+# Update Benchmarking plots
+name: Benchmarks
+
+# The events that trigger the workflow
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+  packages: write
+
+
+jobs:
+  benchmark:
+    name: python
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install the project
+        run: uv sync --locked --all-extras --dev
+
+      - name: Run benchmarks
+        # For example, using `pytest`
+        run: uv run magpy_benchmark --out_folder=benchmarks
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v3
+        with:
+          name: benchmark-results
+          path: benchmarks/results
+
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: 'catch2' # Specify that the benchmark tool is Catch2
+          output-file-path: benchmarks # Path to the benchmark output file
+          comment-on-alert: true
+          gh-pages-branch: gh-pages # Branch to store benchmark results
+          summary-always: true # Always show summary in job logs
+          fail-on-alert: false # Do not fail the workflow on alert
+          benchmark-data-dir-path: "" # Use ROOT directory
+          # Push and deploy GitHub pages branch automatically, only if type isn't PR
+          auto-push: ${{ github.event_name != 'pull_request' }}     
