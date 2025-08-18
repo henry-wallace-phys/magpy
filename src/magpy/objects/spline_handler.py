@@ -15,11 +15,11 @@ class Spline:
         self._is_flat = (len(set(y.cpu().numpy())) < 2) 
         
         if self._is_flat:
-            self._spline_stack = torch.tensor([0,0,0,0,0])
+            self._spline_stack = torch.tensor([0,0,0,0,0], dtype=torch.float64, device=x.device)
         else:
             spline = CubicSpline(x.cpu().numpy(), y.cpu().numpy())
-            knots = torch.tensor(spline.x).to(device=x.device, dtype=torch.float32)
-            coefs = torch.tensor(spline.c).to(device=x.device, dtype=torch.float32)
+            knots = torch.tensor(spline.x).to(device=x.device, dtype=torch.float64)
+            coefs = torch.tensor(spline.c).to(device=x.device, dtype=torch.float64)
             self._spline_stack = torch.vstack((knots[:-1], coefs)).T
             
     @property
@@ -37,7 +37,7 @@ class Spline:
         return self._is_flat
 
 class SplineMonolith:
-    FLAT_SPLINE = torch.tensor([0, 0, 0, 0, 0], dtype=torch.float32)
+    FLAT_SPLINE = torch.tensor([0, 0, 0, 0, 0], dtype=torch.float64)
 
     def __init__(self, splines: List[Spline]):
         # Indices
@@ -54,7 +54,7 @@ class SplineMonolith:
         
         # Spline monolith
         
-        self._spline_monolith = torch.vstack([spline.spline for spline in splines if not spline.is_flat])        
+        self._spline_monolith = torch.vstack([spline.spline for spline in splines if not spline.is_flat]) 
         
 
     @property
@@ -98,7 +98,7 @@ class SplineMonolith:
         '''
         Evaluate a vector of splines and return the weights
         '''
-        weights = torch.ones(len(x), dtype=torch.float32, device=x.device)
+        weights = torch.ones(len(x), dtype=torch.float64, device=x.device)
         # Reduce to non-flat
         x_non_flat = x[~self._flat_splines]
         
