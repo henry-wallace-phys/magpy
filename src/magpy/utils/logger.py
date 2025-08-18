@@ -1,5 +1,6 @@
 import logging
 
+
 def get_log_level_from_str(level_str: str) -> int:
     level_str = level_str.upper()
     if level_str == "DEBUG":
@@ -15,21 +16,25 @@ def get_log_level_from_str(level_str: str) -> int:
     else:
         raise ValueError(f"Unknown log level: {level_str}")
 
+
 def setup_logger(name: str, level: str = "INFO") -> logging.Logger:
-    '''
+    """
     Logs are of form <timestamp> <level> <filename>:<lineno> <message>
-    '''
+    """
     logger = logging.getLogger(name)
     logger.setLevel(get_log_level_from_str(level))
 
     handler = logging.StreamHandler()
     handler.setLevel(get_log_level_from_str(level))
 
-    formatter = logging.Formatter('%(asctime)s %(levelname)s %(filename)s:%(lineno)d %(message)s')
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s %(filename)s:%(lineno)d %(message)s"
+    )
     handler.setFormatter(formatter)
 
     logger.addHandler(handler)
     return logger
+
 
 def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)

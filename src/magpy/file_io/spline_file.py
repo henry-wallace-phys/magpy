@@ -1,7 +1,4 @@
-from typing import List, Tuple
-
 import uproot
-import numpy as np
 from tqdm import tqdm
 import torch
 
@@ -17,8 +14,7 @@ file -> syst_name -> TGraphs
 
 
 class SplineFile(RootFile):
-    """Spline file handler for the magpy ecosystem.
-    """
+    """Spline file handler for the magpy ecosystem."""
 
     def __init__(self, file_path: str):
         """Initialize the SplineFile class.
@@ -28,24 +24,30 @@ class SplineFile(RootFile):
         """
         print(f"Loading spline file: {file_path}")
         super().__init__(file_path)
-        
-        self.systematic_names = [key.rstrip('/').rstrip(';') for key in self.file.keys() if isinstance(self.file[key], uproot.ReadOnlyDirectory)]
+
+        self.systematic_names = [
+            key.rstrip("/").rstrip(";")
+            for key in self.file.keys()
+            if isinstance(self.file[key], uproot.ReadOnlyDirectory)
+        ]
         print("Extracting splines")
-        
+
         self._n_systs = len(self.systematic_names)
-        
+
         # We now convert the TGraphs to CubicSpline objects
         spline_array = []
 
-        for syst in tqdm(self.systematic_names, total=len(self.systematic_names), desc="Loading splines"):
-            for spline in self.file[syst].values():                
+        for syst in tqdm(
+            self.systematic_names,
+            total=len(self.systematic_names),
+            desc="Loading splines",
+        ):
+            for spline in self.file[syst].values():
                 x, y = spline.values()
                 spline_array.append(Spline(torch.tensor(x), torch.tensor(y)))
 
-
         self._monolith = SplineMonolith(spline_array)
-        
+
     @property
     def monolith(self):
         return self._monolith
-
