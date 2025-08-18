@@ -19,6 +19,19 @@ class NuType(Enum):
     def __str__(self):
         return self.name
 
+class OscParIndex(Enum):
+    S12SQ = 0
+    S13SQ = 1
+    S23SQ = 2
+    DELTA = 3
+    DMSQ21 = 4
+    DMSQ31 = 5
+
+    def __str__(self):
+        return self.name
+
+
+@torch.jit.script
 class Oscillator:
     '''
     Oscillation through matter
@@ -30,55 +43,62 @@ class Oscillator:
         self.n_newton = n_newton
 
         self.current_osc_pars = torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=torch.float64)
-        self.current_weights = None
+        self.current_weights = torch.tensor([], dtype=torch.float64)
+        
+        self.eVsqkm_to_GeV_over4 = 1e-9 / 1.97327e-7 * 1e3 / 4
+        self.YerhoE2a = 1.52588e-4
 
-    def calc_probability(self, s12sq: float, s13sq: float, s23sq: float,
-                               delta: float, Dmsq21: float, Dmsq31: float, E: torch.Tensor, osc_in: torch.Tensor, osc_out: torch.Tensor)->torch.Tensor:
+
+    def calc_probability(self, osc_params: torch.Tensor, E: torch.Tensor, osc_in: torch.Tensor, osc_out: torch.Tensor)->torch.Tensor:
         # --------------------------------------------------------------------- #
         # First calculate useful simple functions of the oscillation parameters #
         # --------------------------------------------------------------------- #
 
-        if torch.tensor([s12sq, s13sq, s23sq, delta, Dmsq21, Dmsq31]).isnan().any():
+        if osc_params.isnan().any():
             raise MagpyProbabilityException("Oscillation parameters must not be NaN.")
 
-        if torch.equal(torch.tensor([s12sq, s13sq, s23sq, delta, Dmsq21, Dmsq31], dtype=torch.float64), self.current_osc_pars):
+        if torch.equal(osc_params, self.current_osc_pars) and self.current_weights is not None:
             return self.current_weights
+
         
         else:
-            self.current_osc_pars = torch.tensor([s12sq, s13sq, s23sq, delta, Dmsq21, Dmsq31], dtype=torch.float64)
-            
-        self.current_osc_pars = (s12sq, s13sq, s23sq, delta, Dmsq21, Dmsq31)
+            self.current_osc_pars = osc_params
 
-        eVsqkm_to_GeV_over4 = 1e-9 / 1.97327e-7 * 1e3 / 4
-        YerhoE2a = 1.52588e-4
+        self.current_osc_pars = osc_params
 
-        c13sq = 1 - s13sq
+
+
+        c13sq = 1 - osc_params[OscParIndex.S13SQ.value]
 
         # Ueisq's
-        Ue2sq = c13sq * s12sq
-        Ue3sq = s13sq
+        Ue2sq = c13sq * osc_params[OscParIndex.S12SQ.value]
+        Ue3sq = osc_params[OscParIndex.S13SQ.value]
 
-        # Umisq's, Utisq's and Jvac	 
-        Um3sq = c13sq * s23sq
-        # Um2sq and Ut2sq are used here as temporary variables, will be properly defined later	 
-        Ut2sq = s13sq * s12sq * s23sq
-        Um2sq = (1 - s12sq) * (1 - s23sq)
+        # Umisq's, Utisq's and Jvac
+        Um3sq = c13sq * osc_params[OscParIndex.S23SQ.value]
+        # Um2sq and Ut2sq are used here as temporary variables, will be properly defined later
+        Ut2sq = osc_params[OscParIndex.S13SQ.value] * osc_params[OscParIndex.S12SQ.value] * osc_params[OscParIndex.S23SQ.value]
+        Um2sq = (1 - osc_params[OscParIndex.S12SQ.value]) * (1 - osc_params[OscParIndex.S23SQ.value])
 
-        Jrr = np.sqrt(Um2sq * Ut2sq)
-        sind = np.sin(delta)
-        cosd = np.cos(delta)
+        Jrr = torch.sqrt(Um2sq * Ut2sq)
+        
+        if (torch.isnan(Jrr)):
+            raise MagpyProbabilityException(f"Jrr is NaN, check oscillation parameters Um2sq: {Um2sq}, {Ut2sq}.")
+
+        sind = torch.sin(osc_params[OscParIndex.DELTA.value])
+        cosd = torch.cos(osc_params[OscParIndex.DELTA.value])
 
         Um2sq = Um2sq + Ut2sq - 2 * Jrr * cosd
         Jmatter = 8 * Jrr * c13sq * sind
         
         # With E
-        Amatter = self.ye * self.rho * E * YerhoE2a
-        Dmsqee = Dmsq31 - s12sq * Dmsq21
+        Amatter = self.ye * self.rho * E * self.YerhoE2a
+        Dmsqee =  osc_params[OscParIndex.DMSQ31.value] - osc_params[OscParIndex.S12SQ.value] * osc_params[OscParIndex.DMSQ21.value] # Dmsq21
 
         # calculate A, B, C, See, Tee, and part of Tmm
-        A = Dmsq21 + Dmsq31 # temporary variable
-        See = A - Dmsq21 * Ue2sq - Dmsq31 * Ue3sq
-        Tmm = Dmsq21 * Dmsq31 # using Tmm as a temporary variable	  
+        A = osc_params[OscParIndex.DMSQ21.value] + osc_params[OscParIndex.DMSQ31.value] # temporary variable
+        See = A - osc_params[OscParIndex.DMSQ21.value] * Ue2sq - osc_params[OscParIndex.DMSQ31.value] * Ue3sq
+        Tmm = osc_params[OscParIndex.DMSQ21.value] * osc_params[OscParIndex.DMSQ31.value] # using Tmm as a temporary variable
         Tee = Tmm * (1 - Ue3sq - Ue2sq)
         
         # E
@@ -90,7 +110,7 @@ class Oscillator:
         # ---------------------------------- #
         xmat = Amatter / Dmsqee
         tmp = 1 - xmat
-        lambda3 = Dmsq31 + 0.5 * Dmsqee * (xmat - 1 + torch.sqrt(tmp * tmp + 4 * s13sq * xmat))
+        lambda3 = osc_params[OscParIndex.DMSQ31.value] + 0.5 * Dmsqee * (xmat - 1 + torch.sqrt(tmp * tmp + 4 * osc_params[OscParIndex.S13SQ.value] * xmat))
 
         # ---------------------------------------------------------------------------- #
         # Newton iterations to improve lambda3 arbitrarily, if needed, (B needed here) #
@@ -120,7 +140,7 @@ class Oscillator:
         Ue3sq = (lambda3 * (lambda3 - See) + Tee) * Xp3
         Ue2sq = (lambda2 * (lambda2 - See) + Tee) * Xp2
 
-        Smm = A - Dmsq21 * Um2sq - Dmsq31 * Um3sq
+        Smm = A - osc_params[OscParIndex.DMSQ21.value] * Um2sq - osc_params[OscParIndex.DMSQ31.value] * Um3sq
         Tmm = Tmm * (1 - Um3sq - Um2sq) + Amatter * (See + Smm - A)
 
         Um3sq = (lambda3 * (lambda3 - Smm) + Tmm) * Xp3
@@ -129,7 +149,7 @@ class Oscillator:
         # ------------- #
         # Use NHS for J #
         # ------------- #
-        Jmatter = Jmatter * Dmsq21 * Dmsq31 * (Dmsq31 - Dmsq21) * PiDlambdaInv
+        Jmatter = Jmatter * osc_params[OscParIndex.DMSQ21.value] * osc_params[OscParIndex.DMSQ31.value] * (osc_params[OscParIndex.DMSQ31.value] - osc_params[OscParIndex.DMSQ21.value]) * PiDlambdaInv
 
         # ----------------------- #
         # Get all elements of Usq #
@@ -144,7 +164,7 @@ class Oscillator:
         # ----------------------- #
         # Get the kinematic terms #
         # ----------------------- #
-        Lover4E = eVsqkm_to_GeV_over4 * self.L / E
+        Lover4E = self.eVsqkm_to_GeV_over4 * self.L / E
 
         D21 = Dlambda21 * Lover4E
         D32 = Dlambda32 * Lover4E
@@ -204,32 +224,63 @@ class Oscillator:
         if torch.any(out_prob<0) or torch.any(out_prob>1):
             raise MagpyProbabilityException("Oscillation probabilities must be in the range [0, 1]. ")
         
-        self.current_weights = out_prob.clone().detach()
+        self.current_weights = out_prob.clone()
 
         return out_prob
+
     
 if __name__=="__main__":
     # Want to time for osc prob calc + plot average time/per reweight
     import time
     import numpy as np
     import matplotlib.pyplot as plt
+    from tqdm import tqdm
     
     device = DeviceManager().device
     
-    N_EVENTS = 50
+    N_EVENTS = 500
 
-    ENERGIES = torch.linspace(0.1, 10, N_EVENTS, dtype=torch.float64, device=device)  # Example energy range
     # Random selection of oscillation channels
-    OSC_CHANS_IN = torch.tensor(np.random.choice([NuType.E.value, NuType.Mu.value, NuType.Tau.value], size=N_EVENTS))
-    OSC_CHANS_OUT = torch.tensor(np.random.choice([NuType.E.value, NuType.Mu.value, NuType.Tau.value], size=N_EVENTS))
 
     # Run the oscillation probability calculations
-    times = np.zeros(100)
-    for i in range(100):
-        oscillator = Oscillator(1300, 0.5, 3, 0)
-        start_time = time.time()
-        probabilities = oscillator.calc_probability(0.31, 0.02, 0.55, 0.7 * np.pi, 7.5e-5, 2.5e-3, ENERGIES, OSC_CHANS_IN, OSC_CHANS_OUT)
-        end_time = time.time()
-        times[i] = end_time - start_time
+    N_ATTEMPTS = 50
+    N_SCALES = 10000000
 
-    print(f"Average time per reweight: {1000*times.mean()/N_EVENTS}±{1000*times.std()/N_EVENTS} ms")
+    oscillator = Oscillator(1300, 0.5, 3, 0)
+    
+    scales = np.arange(1, N_SCALES, 50000)
+    times_jit = torch.empty((N_ATTEMPTS, len(scales)), dtype=torch.float64)
+    times_no_jit = torch.empty((N_ATTEMPTS, len(scales)), dtype=torch.float64)
+
+    for j, event_scale in tqdm(enumerate(scales), desc="Event scale", total=len(scales)):
+        N_EVENTS = event_scale
+        
+        OSC_CHANS_IN = np.random.choice([NuType.E.value, NuType.Mu.value, NuType.Tau.value], size=N_EVENTS)
+        OSC_CHANS_OUT = np.random.choice([NuType.E.value, NuType.Mu.value, NuType.Tau.value], size=N_EVENTS)
+
+        ENERGIES = torch.tensor(np.linspace(0.1, 10, N_EVENTS), dtype=torch.float64, device=device)  # Example energy range
+
+        oscillator = Oscillator(1300, 0.5, 3, 0)
+        for i in range(N_ATTEMPTS):
+            osc_pars = torch.tensor([0.3, 0.02, 0.55, 0.7 * np.pi, 7.5e-5, 2.5e-3]) * (1+(i/(100000*10)))  # Small random perturbation
+            start_time = time.time()
+            probabilities = oscillator.calc_probability(osc_pars, ENERGIES, OSC_CHANS_IN, OSC_CHANS_OUT)
+            end_time = time.time()
+            times_jit[i, j] = end_time - start_time
+
+
+    # Calculate average times
+    avg_times_jit = torch.mean(times_jit, dim=0)
+    std_times_jit = torch.std(times_jit, dim=0)
+    
+    
+    # Get LOBF for avg_times
+
+    plt.figure(figsize=(10, 6))
+    plt.errorbar(scales, avg_times_jit, yerr=std_times_jit,  fmt='o-', capsize=5, label="jit")
+    plt.title('Average Oscillation Probability Calculation Time vs Event Scale (JIT)')
+    # plt.legend()
+    plt.xlabel('N Events')
+    plt.ylabel('Reweight Time (s)')
+    plt.grid()
+    plt.savefig("scale_wjit.png")

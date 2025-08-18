@@ -46,8 +46,9 @@ def test_oscillator(s12sq: float, s13sq: float, s23sq: float,
 
 
     oscillator = Oscillator(1300, 0.5, 3, 0)
-    
-    osc_prob = oscillator.calc_probability(s12sq, s13sq, s23sq, delta, Dmsq21, Dmsq31, energies, osc_in, osc_out)
+    osc_pars = torch.tensor([s12sq, s13sq, s23sq, delta, Dmsq21, Dmsq31], dtype=torch.float64)
+
+    osc_prob = oscillator.calc_probability(osc_pars, energies, osc_in, osc_out)
 
     for i, (exp, pref) in enumerate(zip(expected_out, osc_prob)):
         assert torch.isclose(exp, pref, rtol=1e-8, atol=1e-8), f"For E={energies[i]} {NuType(osc_in[i].item())}->{NuType(osc_out[i].item())}  Expected {exp}, got {pref}"
