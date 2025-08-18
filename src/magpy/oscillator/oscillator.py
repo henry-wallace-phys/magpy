@@ -3,10 +3,13 @@ Tensorified version of nufast:
  https://github.com/PeterDenton/NuFast-LBL/tree/main
  Based on arXiv:2405.02400
 '''
+from enum import Enum
+
 import torch
 import numpy as np
 
-from enum import Enum
+from magpy.utils.device_manager import DeviceManager
+from magpy.Exceptions import MagpyProbabilityException
 
 class NuType(Enum):
     E = 1
@@ -26,11 +29,26 @@ class Oscillator:
         self.ye = ye
         self.n_newton = n_newton
 
+        self.current_osc_pars = torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=torch.float64)
+        self.current_weights = None
+
     def calc_probability(self, s12sq: float, s13sq: float, s23sq: float,
                                delta: float, Dmsq21: float, Dmsq31: float, E: torch.Tensor, osc_in: torch.Tensor, osc_out: torch.Tensor)->torch.Tensor:
         # --------------------------------------------------------------------- #
         # First calculate useful simple functions of the oscillation parameters #
         # --------------------------------------------------------------------- #
+
+        if torch.tensor([s12sq, s13sq, s23sq, delta, Dmsq21, Dmsq31]).isnan().any():
+            raise MagpyProbabilityException("Oscillation parameters must not be NaN.")
+
+        if torch.equal(torch.tensor([s12sq, s13sq, s23sq, delta, Dmsq21, Dmsq31], dtype=torch.float64), self.current_osc_pars):
+            return self.current_weights
+        
+        else:
+            self.current_osc_pars = torch.tensor([s12sq, s13sq, s23sq, delta, Dmsq21, Dmsq31], dtype=torch.float64)
+            
+        self.current_osc_pars = (s12sq, s13sq, s23sq, delta, Dmsq21, Dmsq31)
+
         eVsqkm_to_GeV_over4 = 1e-9 / 1.97327e-7 * 1e3 / 4
         YerhoE2a = 1.52588e-4
 
@@ -182,4 +200,36 @@ class Oscillator:
         out_prob[(osc_in == NuType.Tau.value) & (osc_out==NuType.E.value)] = Pte[(osc_in == NuType.Tau.value) & (osc_out==NuType.E.value)]
         out_prob[(osc_in == NuType.Tau.value) & (osc_out==NuType.Mu.value)] = Ptm[(osc_in == NuType.Tau.value) & (osc_out==NuType.Mu.value)]
         out_prob[(osc_in == NuType.Tau.value) & (osc_out==NuType.Tau.value)] = Ptt[(osc_in == NuType.Tau.value) & (osc_out==NuType.Tau.value)]
+
+        if torch.any(out_prob<0) or torch.any(out_prob>1):
+            raise MagpyProbabilityException("Oscillation probabilities must be in the range [0, 1]. ")
+        
+        self.current_weights = out_prob.clone().detach()
+
         return out_prob
+    
+if __name__=="__main__":
+    # Want to time for osc prob calc + plot average time/per reweight
+    import time
+    import numpy as np
+    import matplotlib.pyplot as plt
+    
+    device = DeviceManager().device
+    
+    N_EVENTS = 50
+
+    ENERGIES = torch.linspace(0.1, 10, N_EVENTS, dtype=torch.float64, device=device)  # Example energy range
+    # Random selection of oscillation channels
+    OSC_CHANS_IN = torch.tensor(np.random.choice([NuType.E.value, NuType.Mu.value, NuType.Tau.value], size=N_EVENTS))
+    OSC_CHANS_OUT = torch.tensor(np.random.choice([NuType.E.value, NuType.Mu.value, NuType.Tau.value], size=N_EVENTS))
+
+    # Run the oscillation probability calculations
+    times = np.zeros(100)
+    for i in range(100):
+        oscillator = Oscillator(1300, 0.5, 3, 0)
+        start_time = time.time()
+        probabilities = oscillator.calc_probability(0.31, 0.02, 0.55, 0.7 * np.pi, 7.5e-5, 2.5e-3, ENERGIES, OSC_CHANS_IN, OSC_CHANS_OUT)
+        end_time = time.time()
+        times[i] = end_time - start_time
+
+    print(f"Average time per reweight: {1000*times.mean()/N_EVENTS}±{1000*times.std()/N_EVENTS} ms")

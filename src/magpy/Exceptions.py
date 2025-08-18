@@ -23,3 +23,7 @@ class MagpyInvalidObjectError(MagpyFileException):
 class MagpySplineException(MagpyException):
     """Base class for all exceptions raised related to spline operations."""
     pass
+
+class MagpyProbabilityException(MagpyException):
+    """Exception raised when a probability calculation fails."""
+    pass
