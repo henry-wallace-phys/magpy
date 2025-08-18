@@ -23,15 +23,11 @@ jobs:
         uses: astral-sh/setup-uv@v6
 
       - name: Make venv
-        run: uv venv --python 3.11; source .venv/bin/activate
-
-
-      - name: Install the project
-        run:  uv pip install .
-
-      - name: Run benchmarks
-        # For example, using `pytest`
-        run: uv run magpy_benchmark --out_folder benchmarks
+        run: |
+            uv venv --python 3.11
+            source .venv/bin/activate
+            uv pip install .
+            uv run magpy_benchmark --out_folder benchmarks
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
