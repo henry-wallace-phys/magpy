@@ -3,8 +3,6 @@ Really simple TSpline3 converter, not designed to be used in the magpy ecosystem
 '''
 
 import ROOT
-import uproot
-import pandas as pd
 from tqdm import tqdm
 
 '''
