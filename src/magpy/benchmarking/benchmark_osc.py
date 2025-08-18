@@ -1,12 +1,10 @@
 import time
 from pathlib import Path
-
 from matplotlib import pyplot as plt
 import numpy as np
 from rich import print
 import torch
 from tqdm import tqdm
-
 from magpy.oscillator.oscillator import Oscillator, NuType
 from magpy.utils.device_manager import DeviceManager
 
