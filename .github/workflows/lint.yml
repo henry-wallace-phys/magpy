@@ -3,7 +3,7 @@ name: Lint with ruff
 
 on:
   push:
-    branches: ['main']
+    branches: ['*']
 
 jobs:
   ruff:

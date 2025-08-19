@@ -1,5 +1,5 @@
 from aenum import MultiValueEnum
-from typing import Dict, List, TypedDict
+from typing import Sequence, List, TypedDict
 
 class SplineModes(MultiValueEnum):
     CCQE = 0, "ccqe"
@@ -10,15 +10,12 @@ class SplineModes(MultiValueEnum):
     NCQE = 5, "ncqe"
     NC1PIPM = 6, "nc1pipm"
     NC1PI0 = 7, "nc1pi0"
-    
-    def __str__(self):
-        return self.CC1PIPM
-    
+        
     def __int__(self):
         return self.values[0]
         
     def spline_name(self):
-        return self.values[2]
+        return self.values[1]
 
     @classmethod
     def from_str(cls, mode_str: str):
@@ -28,7 +25,7 @@ class SplineModes(MultiValueEnum):
         raise ValueError(f"Unknown mode: {mode_str}")
 
 class SplineDict(TypedDict):
-    bins: List[int]
+    bins: Sequence[int]
     mode: str
     syst: str
 
