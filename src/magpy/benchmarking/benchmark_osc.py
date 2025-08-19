@@ -69,7 +69,7 @@ def benchmark_osc(n_iter: int = 50, n_scales: int = 100000, points: int = 100):
         )  # Example energy range
 
         oscillator = Oscillator(1300, 0.5, 3, 0)
-        oscillator_tmp.set_energy_osc(energies, osc_in, osc_out)
+        oscillator.set_energy_osc(energies, osc_in, osc_out)
 
         for i in range(n_iter):
             osc_mod = osc_pars.clone() * (

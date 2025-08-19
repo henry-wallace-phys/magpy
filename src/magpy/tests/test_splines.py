@@ -5,7 +5,6 @@ A series of tests for spline code
 from pathlib import Path
 
 import torch
-import pytest
 
 from magpy.objects.spline_handler import SplineMonolith, Spline
 from magpy.file_io.spline_file import SplineFile

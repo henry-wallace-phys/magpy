@@ -3,6 +3,11 @@ from magpy.benchmarking.benchmark_osc import (
     plot_scaling,
     plot_average_time_per_event,
 )
+from magpy.benchmarking.benchmark_reweight import (
+    benchmark_reweight,
+    plot_hist,
+)
+
 import click
 
 from pathlib import Path
@@ -39,3 +44,6 @@ def main(
     plot_average_time_per_event(
         times, scales, plot_file=f"{out_folder}/osc_average_time_event.png"
     )
+
+    reweight_times = benchmark_reweight(n_iter=n_iter)
+    plot_hist(reweight_times, plot_file=f"{out_folder}/reweight_histogram.png")

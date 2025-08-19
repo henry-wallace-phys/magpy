@@ -14,7 +14,7 @@ from magpy.models.spline_syst_model import SplineSystematicModel
 from magpy.oscillator.oscillator import Oscillator
 from magpy.Exceptions import MagpyInvalidObjectError
 
-class FullEventModel:
+class SampleModel:
     def __init__(self, mc_file: MCFile, spline_file: SplineFile, systematic_file: SystematicFile, oscillator: Oscillator, bin_variables: Optional[List[MCEventIndices]] = None):
         """
         Handle the full event model, including MC events, splines and systematics.
@@ -122,7 +122,7 @@ if __name__=="__main__":
     spline_file = SplineFile(SPLINE_FILE_PATH)
     oscillator = Oscillator(1300, 0.5, 3, 0)
 
-    handler = FullEventModel(mc_file, spline_file, systematic_file, oscillator=oscillator)
+    handler = SampleModel(mc_file, spline_file, systematic_file, oscillator=oscillator)
 
     bin_vars = torch.tensor([MCEventIndices.TRUE_NEUTRINO_ENERGY.value,
                              MCEventIndices.TRUE_Q2.value,
