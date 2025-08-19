@@ -3,8 +3,17 @@ on: [push]
 
 jobs:
   unit_tests:
-    name: python
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    fail-fast: true
+    matrix:
+      include:
+        - name: 'cpu'
+          compile_opts: uv sync
+          branch: "cpu-benchmarks"
+        - name: 'gpu'
+          compile_opts: uv sync --extra cu128
+          branch: "gpu-benchmarks"
 
     steps:
       - uses: actions/checkout@v4
@@ -17,4 +26,5 @@ jobs:
             uv venv --python 3.11
             source .venv/bin/activate
             uv pip install .
+            ${{ matrix.compile_opts }}
             uv run pytest
