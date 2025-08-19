@@ -57,6 +57,11 @@ def tspline3_converter(input_file_name: str):
             out_graph.SetPoint(i, x.value, y.value)
 
         out_graph.Write(f"{spline.GetName()}")
+    
+    binning_hist = input_file.Get("dev_tmp.0.0")
+    if binning_hist:
+        out_file.cd()
+        binning_hist.Write("dev_tmp.0.0")
 
 if __name__ == "__main__":
     FILE = "/Users/henrywallace/software/magpy/BinnedSplinesTutorialInputs2D.root"
