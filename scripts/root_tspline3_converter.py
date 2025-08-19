@@ -35,10 +35,11 @@ def sample_sum_tspline3_converter(input_file: str, input_tree: str = "sample_sum
         for i, spline in enumerate(splines):
             spline.Write(f"{spline.GetName()}_{i}")
 
+
 def tspline3_converter(input_file_name: str):
     input_file = ROOT.TFile(input_file_name, "READ")
     out_file = ROOT.TFile("converted_splines.root", "RECREATE")
-    
+
     # Loop over objects in file
     out_file.cd()
     for key in tqdm(input_file.GetListOfKeys(), desc="Converting TSpline3"):
@@ -48,20 +49,21 @@ def tspline3_converter(input_file_name: str):
         out_graph = ROOT.TGraph(spline.GetNp())
 
         for i in range(spline.GetNp()):
-            x=ctypes.c_double()
-            y=ctypes.c_double()
-            b=ctypes.c_double()
-            c=ctypes.c_double()
-            d=ctypes.c_double()
-            spline.GetCoeff(i,x,y, b,c,d)
+            x = ctypes.c_double()
+            y = ctypes.c_double()
+            b = ctypes.c_double()
+            c = ctypes.c_double()
+            d = ctypes.c_double()
+            spline.GetCoeff(i, x, y, b, c, d)
             out_graph.SetPoint(i, x.value, y.value)
 
         out_graph.Write(f"{spline.GetName()}")
-    
+
     binning_hist = input_file.Get("dev_tmp.0.0")
     if binning_hist:
         out_file.cd()
         binning_hist.Write("dev_tmp.0.0")
+
 
 if __name__ == "__main__":
     FILE = "/Users/henrywallace/software/magpy/BinnedSplinesTutorialInputs2D.root"

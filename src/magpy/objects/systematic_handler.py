@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 from magpy.objects.spline_handler import Spline
 
+
 @dataclass
 class Systematic:
     syst_name: str
@@ -12,7 +13,6 @@ class Systematic:
     modes: List[int]
     nominal: float
     error: float
-
 
     prior: str = "gaussian"  # gaussian, uniform
 
@@ -27,10 +27,11 @@ class Systematic:
         if self.kinematic_cuts is None:
             self.kinematic_cuts = [{}]
 
+
 class SystematicHandler:
     def __init__(self, systematics: List[Systematic]):
         self._systematics = systematics
-    
+
     @property
     def systematics(self) -> List[Systematic]:
         return self._systematics

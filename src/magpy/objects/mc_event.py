@@ -13,7 +13,10 @@ class MCEventIndices(Enum):
     INTERACTION_MODE = 3
     START_NU = 4
     END_NU = 5
-    WEIGHT = 6
+    
+    TARGET = 6
+    WEIGHT = 7
+    NENTRIES = 8
     DUMMY = -1
 
 
@@ -23,9 +26,12 @@ class MCEvent:
     true_q2: float  # True Q2
     reco_neutrino_energy: float  # Reconstructed neutrino energy
     interaction_mode: int  # Interaction mode
+    target: int  # PDG for target
+    
     start_nu: int  # PDG for incoming neutrino
     end_nu: int  # PDG for outgoing neutrino
-
+    weight: float = 0 # Event weight
+    
     # Now we want to make it tensor-y
     def to_tensor(self):
         return torch.tensor(
@@ -36,9 +42,10 @@ class MCEvent:
                 self.interaction_mode,
                 self.start_nu,
                 self.end_nu,
+                self.target,
                 0.0,  # Placeholder for weight, can be set later
             ],
-            dtype=torch.float32,
+            dtype=torch.float64,
         )
 
 
@@ -47,7 +54,18 @@ class MCEventMonolith:
         self._mc_event_monolith = torch.stack(
             [event.to_tensor() for event in mc_event_list]
         )
+        
+        self._mc_event_monolith.to(torch.float64)
+        
+        self._n_events = len(mc_event_list)
 
     @property
     def monolith(self):
         return self._mc_event_monolith
+
+    @property
+    def n_events(self):
+        return self._n_events
+    
+    def __len__(self):
+        return self._n_events

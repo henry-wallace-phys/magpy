@@ -1,0 +1,40 @@
+---
+Systematics:
+  - syst_name: mysyst1
+    spline_name: mysyst1
+    range: [-999, 999]
+    modes: [0]
+    nominal: 1.0
+    error: 0.1
+    syst_type: "spline"
+  - syst_name: mysyst2
+    spline_name: mysyst2
+    range: [-999, 999]
+    modes: [2]
+    nominal: 1.0
+    error: 0.1
+    syst_type: "spline"
+  
+  - syst_name: mysyst3
+    spline_name: mysyst3
+    range: [-999, 999]
+    modes: [1]
+    nominal: 1.0
+    error: 0.1
+    syst_type: "spline"
+
+  - syst_name: mysyst4
+    spline_name: mysyst4
+    range: [-999, 999]
+    modes: [3]
+    nominal: 1.0
+    error: 0.1
+    syst_type: "spline"
+
+  - syst_name: mysyst5
+    spline_name: mysyst5
+    range: [-999, 999]
+    modes: [4]
+    nominal: 1.0
+    error: 0.1
+    syst_type: "spline"

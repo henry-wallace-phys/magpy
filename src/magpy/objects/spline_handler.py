@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 from scipy.interpolate import CubicSpline
 import torch
@@ -65,26 +65,51 @@ class SplineMonolith:
             [spline.spline for spline in splines if not spline.is_flat]
         )
 
-    @property
-    def indices(self):
-        """
-        Get indices
-        """
-        return self._indices
+        self._spline_syst_map = None
 
-    @property
-    def monolith(self):
-        """
-        Get the monolith
-        """
-        return self._spline_monolith
+        # PRE-CALCULATE: Move expensive computations out of __call__
+        self._setup_fast_lookup()
+        
 
-    def is_flat(self, item: int) -> bool:
-        return self._flat_splines[item]
+    def _setup_fast_lookup(self):
+        """Pre-calculate lookup structures for fast spline evaluation"""
+        # Pre-calculate knot ranges for each non-flat spline
+        self._knot_ranges = torch.zeros((self._indices.shape[0], 2), dtype=torch.int64)
+        for i in range(self._indices.shape[0]):
+            if i == 0:
+                low, high = 0, self._indices[0]
+            else:
+                low, high = self._indices[i - 1], self._indices[i]
+            self._knot_ranges[i] = torch.tensor([low, high])
 
-    def __len__(self):
-        return self._n_splines
+        # Pre-extract all knot sequences for faster access
+        self._knot_sequences = []
+        for low, high in self._knot_ranges:
+            knots = self._spline_monolith[low:high, 0].contiguous()
+            self._knot_sequences.append(knots)
 
+    def map_splines_to_syst(self, spline_syst_map: torch.Tensor):
+        self._spline_syst_map = spline_syst_map
+        self._dim = len(spline_syst_map)
+        self._n_syst = len(torch.unique(self._spline_syst_map[:, 0]))
+
+        self._n_non_flat = self._dim - len(self._flat_splines)
+
+        # We can also cache the number of splines for each index
+        self._par_splines = []
+        # Remove flat splines from spline syst map
+        non_flat_spline_syst_map = spline_syst_map[spline_syst_map[:,1][~self._flat_splines]]
+
+        for i in range(self._n_syst):
+            # Get all splines for this systematic
+            splines_for_par = non_flat_spline_syst_map[non_flat_spline_syst_map[:, 0] == i][:,1]
+            self._par_splines.append(splines_for_par)
+        
+        self._weights = torch.ones(self._dim, dtype=torch.float64)
+        self._par_arr = torch.zeros(self._dim, dtype=torch.float64)
+        self._knot_indices = torch.zeros(self._dim, dtype=torch.int64)
+    
+        
     def __getitem__(self, item: int):
         if item >= len(self._indices):
             raise IndexError("Index out of range")
@@ -98,46 +123,79 @@ class SplineMonolith:
         else:
             return self._spline_monolith[self._indices[item - 1] : self._indices[item]]
 
-    def flat_indices(self) -> torch.Tensor:
-        return self._flat_splines
+
+    def is_flat(self, item: int) -> bool:
+        return self._flat_splines[item].item()
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Evaluate a vector of splines and return the weights
+        Evaluate a vector of splines and return the weights - OPTIMIZED
         """
+        if self._spline_syst_map is not None:
+            return self.get_knots_grouped(x)
+        else:
+            return self.get_knots_ungrouped(x)
+
+    def get_knots_grouped(self, x: torch.Tensor) -> torch.Tensor:
+        '''
+        ULTRA-OPTIMIZED: For when you know what maps to what
+        All non-flat splines for a given systematic share the same knots!
+        '''
+        if len(x) != self._n_syst:
+            raise MagpySplineException(
+                f"Input tensor x must have length {self._n_syst} (number of systematics)."
+            )
+           
+        # We now loop over the systematic parameters
+        for i, par in enumerate(x):
+            # Get the splines for this systematic
+            splines = self._par_splines[i]
+            # Knots are shared so we just need the first value
+            knot = self._knot_sequences[splines[0]]
+            # Get the index
+            self._knot_indices[splines] =  max(torch.searchsorted(knot, par).item() - 1, 0)
+            self._knot_indices[splines] += self._knot_ranges[splines, 0]
+            self._par_arr[splines] = par.to(torch.float64)
+
+        coefs = self._spline_monolith[self._knot_indices][~self._flat_splines]
+        reduced_par_arr = self._par_arr[~self._flat_splines]
+
+        dx = reduced_par_arr - coefs[:, 0]
+        self._weights[~self._flat_splines] = (
+            (coefs[:, 1] * dx + (coefs[:, 2])) * dx + coefs[:, 3]
+        ) * dx + coefs[:, 4]
+
+        return self._weights
+
+    def get_knots_ungrouped(self, x: torch.Tensor)->torch.Tensor:
+        '''
+        For when you just have a load of spline parameters
+        '''
+        
         weights = torch.ones(len(x), dtype=torch.float64, device=x.device)
-        # Reduce to non-flat
+        
+        # Use pre-calculated non-flat data
         x_non_flat = x[~self._flat_splines]
 
-        non_flat_indices = self._indices[~self._flat_splines]
-
-        if len(x_non_flat) != len(non_flat_indices):
-            raise ValueError(
-                "Input tensor x must have the same length as the number of spline segments."
-            )
-
-        knot_indices = torch.zeros(len(x_non_flat), dtype=torch.int64)
-        for i, s in enumerate(x_non_flat):
-            if i == 0:
-                low, high = 0, non_flat_indices[0]
-            else:
-                low, high = non_flat_indices[i - 1], non_flat_indices[i]
-
-            knots = self._spline_monolith[low:high, 0].contiguous()
-
+        knot_indices = torch.zeros(len(x_non_flat), dtype=torch.int64, device=x_non_flat.device)
+        for i, (s, knots) in enumerate(zip(x_non_flat, self._knot_sequences)):
             knot_indices[i] = max(torch.searchsorted(knots, s).item() - 1, 0)
+            # Adjust for global monolith indexing
+            knot_indices[i] += self._knot_ranges[i][0]
 
         # Get the coefficients for the segments
         coefs = self._spline_monolith[knot_indices]
 
-        # Now we calculate the polynomial value
+        if len(x_non_flat) == 0:
+            return weights
 
-        # Get the differences
+        # OPTIMIZED: Use pre-calculated knot sequences
+
+        # Calculate polynomial value
         dx = x_non_flat - coefs[:, 0]
-
-        # Get the weights
         weights[~self._flat_splines] = (
             (coefs[:, 1] * dx + (coefs[:, 2])) * dx + coefs[:, 3]
         ) * dx + coefs[:, 4]
 
         return weights
+

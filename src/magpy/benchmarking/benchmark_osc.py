@@ -47,9 +47,8 @@ def benchmark_osc(n_iter: int = 50, n_scales: int = 100000, points: int = 100):
             print("Burning a few cycles in...")
             for i in range(100):
                 oscillator_tmp = Oscillator(1300, 0.5, 3, 0)
-                oscillator_tmp.calc_probability(
-                    osc_pars, energies_tmp, osc_in_tmp, osc_out_tmp
-                )
+                oscillator_tmp.set_energy_osc(energies_tmp, osc_in_tmp, osc_out_tmp)
+                oscillator_tmp.calc_probability(osc_pars)
 
         osc_in = torch.tensor(
             np.random.choice(
@@ -70,13 +69,14 @@ def benchmark_osc(n_iter: int = 50, n_scales: int = 100000, points: int = 100):
         )  # Example energy range
 
         oscillator = Oscillator(1300, 0.5, 3, 0)
+        oscillator_tmp.set_energy_osc(energies, osc_in, osc_out)
 
         for i in range(n_iter):
             osc_mod = osc_pars.clone() * (
                 1.0001 + (np.random.uniform(0, 1) / (n_iter * 100))
             )
             start_time = time.time()
-            _ = oscillator.calc_probability(osc_mod, energies, osc_in, osc_out)
+            _ = oscillator.calc_probability(osc_mod)
             end_time = time.time()
             times[i, j] = end_time - start_time
 
