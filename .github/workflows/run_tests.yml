@@ -5,15 +5,16 @@ jobs:
   unit_tests:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
-    fail-fast: true
-    matrix:
-      include:
-        - name: 'cpu'
-          compile_opts: uv sync
-          branch: "cpu-benchmarks"
-        - name: 'gpu'
-          compile_opts: uv sync --extra cu128
-          branch: "gpu-benchmarks"
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: 'cpu'
+            compile_opts: uv sync
+            branch: "cpu-benchmarks"
+          - name: 'gpu'
+            compile_opts: uv sync --extra cu128
+            branch: "gpu-benchmarks"
 
     steps:
       - uses: actions/checkout@v4
