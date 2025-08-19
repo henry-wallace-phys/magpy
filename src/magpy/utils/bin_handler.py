@@ -46,8 +46,6 @@ class BinHandler:
 
         return_tensor = torch.zeros((len(index), len(self.bin_edges), 2), dtype=torch.float64, device=index.device)
 
-        print("idx:",index)
-
         return_tensor[index<len(self._bin_edge_tensor)] = self._bin_edge_tensor[index[index<len(self._bin_edge_tensor)-1]]
         return_tensor[index>=len(self._bin_edge_tensor)] = torch.tensor([-1.0, -1.0],dtype=return_tensor.dtype, device=return_tensor.device)
 
@@ -62,16 +60,14 @@ class BinHandler:
 
         bin_indices = torch.zeros((kinematic.shape), dtype=torch.int, device=kinematic.device)
         
-        print(kinematic)
 
-        for i, edge in enumerate(self.bin_edges):
-            bin_indices[:,i] = torch.searchsorted(edge, (kinematic[:,i].contiguous()))-1
+        for i, edge in enumerate(self.bin_edges):            
+            bin_indices[:,i] = torch.searchsorted(edge[:-1], (kinematic[:,i].contiguous()))-1
             bin_indices[:,i][kinematic[:,i] < edge[0]] = -1
-            bin_indices[:,i][kinematic[:,i] >= edge[-1]] = len(edge) 
+            bin_indices[:,i][kinematic[:,i] >= edge[-1]] = len(edge) - 1
 
             # if torch.any(bin_indices[:,i] < 0) or torch.any(bin_indices[:,i] >= len(self.bin_edges[i]) - 1):
             #     warnings.warn("Some kinematic values are out of bounds for the bin edges.", OutOfBoundsBinWarning)
-        print("bin_indices:", bin_indices)
         return bin_indices
 
 

@@ -55,7 +55,6 @@ def test_bin_index_conversion():
     
     output_bins = handler.get_bin_from_int(indices)
     
-    print(output_bins)
     assert torch.allclose(output_bins, expected_bins), f"Expected {expected_bins}, got {output_bins}"
 
 
@@ -74,12 +73,11 @@ def test_bin_finding():
                                 [2, 4, 1]
                                 ], dtype=torch.float64)
     
-    expected_output = torch.tensor([[0, 6, -1], [1, 3, 0]], dtype=torch.int)
+    expected_output = torch.tensor([[0, 5, -1], [1, 3, 0]], dtype=torch.int)
     
     handler = BinHandler(bin_edges)
     
     output_indices = handler.find_bin(kinematics)
-    print("HI", output_indices)
     
     assert torch.equal(output_indices, expected_output), f"Expected {expected_output}, got {output_indices}"
     

@@ -11,9 +11,6 @@ class SplineModes(MultiValueEnum):
     NC1PIPM = 6, "nc1pipm"
     NC1PI0 = 7, "nc1pi0"
         
-    def __int__(self):
-        return self.values[0]
-        
     def spline_name(self):
         return self.values[1]
 

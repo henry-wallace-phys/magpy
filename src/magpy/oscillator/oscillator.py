@@ -11,9 +11,12 @@ from magpy.Exceptions import MagpyProbabilityException
 
 
 class NuType(Enum):
-    E = 1
-    Mu = 2
-    Tau = 3
+    E = 12
+    EBar=-12
+    Mu = 14
+    MuBar = -14
+    Tau = 16
+    TauBar = -16
 
     def __str__(self):
         return self.name
@@ -64,17 +67,21 @@ class Oscillator:
 
         if osc_params.isnan().any():
             raise MagpyProbabilityException("Oscillation parameters must not be NaN.")
+        if torch.any(torch.sign(osc_in)!=torch.sign(osc_out)):
+            raise MagpyProbabilityException("Oscillation in and out must have the same sign.")
 
         if (
             torch.equal(osc_params, self.current_osc_pars)
             and self.current_weights is not None
         ):
             return self.current_weights
-
         else:
             self.current_osc_pars = osc_params
 
         self.current_osc_pars = osc_params
+
+        # Convert energy to energy * sign(neutrino)
+        E = E.clone() * torch.sign(osc_in)
 
         c13sq = 1 - osc_params[OscParIndex.S13SQ.value]
 

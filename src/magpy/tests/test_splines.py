@@ -4,88 +4,71 @@ A series of tests for spline code
 from pathlib import Path
 
 import torch
+import pytest
 
 from magpy.objects.spline_handler import SplineMonolith, Spline
 from magpy.file_io.spline_file import SplineFile
 from magpy.models.spline_syst_model import SplineSystematicModel
 from magpy.objects.systematic_handler import SystematicHandler, Systematic
+from magpy.objects.mc_event import MCEventMonolith, MCEvent, MCEventIndices
 
 # Test file loading
-def test_flat_spline():
-    """Check behaviour for flat splines"""
-    spline = Spline(
+class SplineTest():
+    flat_spline = Spline(
         torch.tensor([0, 1, 2, 3], dtype=torch.float64),
         torch.tensor([0, 0, 0, 0], dtype=torch.float64),
     )
-    expected = torch.tensor([0, 0, 0, 0, 0], dtype=torch.float64)
-
-    assert spline.is_flat
-    assert torch.isclose(spline.spline, expected, rtol=1e-8, atol=1e-8).all(), f"Expected {expected}, but got {spline.spline}"
-
-
-def test_non_flat_spline():
-    """Check behaviour for non-flat splines"""
-    spline = Spline(torch.tensor([0, 1, 2, 3]), torch.tensor([0, 1, 2, 3]))
-    expected = torch.tensor(
-        [
-            [0.0, 0.0, 0.0, 1.0, 0.0],
-            [1.0, 0.0, 0.0, 1.0, 1.0],
-            [2.0, 0.0, 0.0, 1.0, 2.0],
-        ],
-        dtype=torch.float64,
-    )
-
-    assert not spline.is_flat
-    assert torch.isclose(spline.spline, expected, rtol=1e-8, atol=1e-8).all(), f"Expected {expected}, but got {spline.spline}"
-
-
-def test_monolith():
-    """Check behaviour for spline monoliths"""
-    flat_example = Spline(
-        torch.tensor([0, 1, 2, 3], dtype=torch.float64),
-        torch.tensor([0, 0, 0, 0], dtype=torch.float64),
-    )
-    spline = Spline(
-        torch.tensor([0, 1, 2, 3], dtype=torch.float64),
-        torch.tensor([0, 1, 2, 3], dtype=torch.float64),
-    )
-
-    spline_monolith = SplineMonolith([flat_example, spline])
-    # Check indexing is done
-
-    print(spline_monolith[1])
-    print(spline.spline)
-
-    assert torch.isclose(
-        spline_monolith[0], flat_example.spline, rtol=1e-8, atol=1e-8
-    ).all(), f"Expected {flat_example.spline}, but got {spline_monolith[0]}"
-    assert torch.isclose(spline_monolith[1], spline.spline, rtol=1e-8, atol=1e-8).all(), f"Expected {spline.spline}, but got {spline_monolith[1]}"
-
-    x_vals = torch.tensor([10, 1.5])
-    assert torch.isclose(
-        spline_monolith(x_vals),
-        torch.tensor([1, 1.5], dtype=torch.float64),
-        rtol=1e-8,
-        atol=1e-8,
-    ).all(), f"Expected {[1, 1.5]}, but got {spline_monolith(x_vals)}"
-
-
-def test_spline_file_open():
-    # Get spline file in tests/data
-    spline_file_path = Path(__file__).parent / "data" / "converted_splines.root"
-
-    spline_file = SplineFile(spline_file_path)
-
-    assert spline_file is not None, "Spline file should be loaded successfully"
-    assert len(spline_file.spline_names) == 250, f"Spline file should contain 250 spline names, instead got {len(spline_file.spline_names)}"
-    assert len(spline_file.monolith) == 250, f"Spline monolith should contain 250 splines, instead got {len(spline_file.monolith)}"
-
-    assert spline_file.get_bin_handler() is not None, "Bin handler should be available"
     
-def test_spline_model():
-    spline_file_path = Path(__file__).parent / "data" / "converted_splines.root"
-    spline_file = SplineFile(spline_file_path)
+    flat_response = torch.tensor([0, 0, 0, 0, 0], dtype=torch.float64)
+    
+    non_flat_spline = Spline(torch.tensor([0, 1, 2, 3]), torch.tensor([0, 1, 2, 3]))
+    non_flat_response = torch.tensor(
+            [
+                [0.0, 0.0, 0.0, 1.0, 0.0],
+                [1.0, 0.0, 0.0, 1.0, 1.0],
+                [2.0, 0.0, 0.0, 1.0, 2.0],
+            ],
+            dtype=torch.float64,
+        )
+    
+    def test_spline(self, spline: Spline, expected: torch.Tensor):
+        assert torch.isclose(spline.spline, expected, rtol=1e-8, atol=1e-8).all(), f"Expected {expected}, but got {spline.spline}"
 
+    def test_flat_spline(self):
+        """Check behaviour for flat splines"""
+        assert self.flat_spline.is_flat
+        self.test_spline(self.flat_spline, self.flat_response)
+
+
+    def test_non_flat_spline(self):
+        """Check behaviour for non-flat splines"""
+
+        assert not self.non_flat_spline.is_flat
+        self.test_spline(self.non_flat_spline, self.non_flat_response)
+
+
+    def test_monolith(self):
+        """Check behaviour for spline monoliths"""
+
+        spline_monolith = SplineMonolith([self.flat_spline, self.non_flat_spline])
+        # Check indexing is done
+        assert torch.isclose(
+            spline_monolith[0], self.flat_spline.spline, rtol=1e-8, atol=1e-8
+        ).all(), f"Expected {self.flat_spline.spline}, but got {spline_monolith[0]}"
+        assert torch.isclose(spline_monolith[1], self.non_flat_spline.spline, rtol=1e-8, atol=1e-8).all(), f"Expected {self.non_flat_spline.spline}, but got {spline_monolith[1]}"
+
+        x_vals = torch.tensor([10, 1.5])
+        assert torch.isclose(
+            spline_monolith(x_vals),
+            torch.tensor([1, 1.5], dtype=torch.float64),
+            rtol=1e-8,
+            atol=1e-8,
+        ).all(), f"Expected {[1, 1.5]}, but got {spline_monolith(x_vals)}"
+
+
+
+class SplineModelTest:
+    spline_file_path = Path(__file__).parent / "data" / "converted_splines.root"
     systs = [
         Systematic(
             syst_name="mysyst1",
@@ -133,11 +116,68 @@ def test_spline_model():
             range=(0.0, 1.0),
         )
     ]
+    
+    def test_file_opening(self):
+        spline_file = SplineFile(str(self.spline_file_path))
+        assert spline_file is not None, "Spline file should be loaded successfully"
+        handler = SystematicHandler(self.systs)
+        model = SplineSystematicModel(spline_file, handler)
 
-    handler = SystematicHandler(systs)
-    model = SplineSystematicModel(spline_file, handler)
+        assert model is not None, "Model should be created successfully"
+        assert len(model.index_tensor) == 250, f"Model index tensor should have 250 elements, instead got {len(model.index_tensor)}"
+        assert model.index_tensor.shape[1] == 6, f"Model index tensor should have 6 columns, instead got {model.index_tensor.shape[1]}"
+        assert torch.equal(model.index_tensor[0], torch.tensor([0, 0, 0, 0, 0, 0], dtype=torch.int64)), f"First row of index tensor should be [0, 0, 0, 0, 0, 0], instead got {model.index_tensor[0]}"
+    
+    def test_spline_mc_monolith(self):
+        '''
+        Check if we can retrieve the correct spline indices for a monolith event
+        '''
+        spline_file = SplineFile(str(self.spline_file_path))
 
-    assert model is not None, "Model should be created successfully"
-    assert len(model.index_tensor) == 250, f"Model index tensor should have 250 elements, instead got {len(model.index_tensor)}"
-    assert model.index_tensor.shape[1] == 6, f"Model index tensor should have 6 columns, instead got {model.index_tensor.shape[1]}"
-    assert torch.equal(model.index_tensor[0], torch.tensor([0, 0, 0, 0, 0, 0], dtype=torch.int64)), f"First row of index tensor should be [0, 0, 0, 0, 0, 0], instead got {model.index_tensor[0]}"
+
+        handler = SystematicHandler(self.systs)
+        model = SplineSystematicModel(spline_file, handler)
+
+        mc = MCEvent(
+            true_neutrino_energy=1.0,
+            true_q2=2.0,
+            reco_neutrino_energy=1.5,
+            interaction_mode=0,
+            start_nu=12,
+            end_nu=14
+        )
+        
+        mc = [MCEvent(
+                true_neutrino_energy=1.0,
+                true_q2=2.0,
+                reco_neutrino_energy=1.5,
+                interaction_mode=0,
+                start_nu=12,
+                end_nu=14
+            ),
+            MCEvent(           
+                true_neutrino_energy=3.5,
+                true_q2=2.0,
+                reco_neutrino_energy=2.5,
+                interaction_mode=2,
+                start_nu=12,
+                end_nu=14
+            )]
+
+        
+        mc_mono = MCEventMonolith(mc_event_list=mc)
+        expected_rows = [[[0, 1, 0, 0, 1, 0]], [[1, 82, 2, 3, 2, 0]]]
+
+        result = model.get_monolith_splines(mc_mono, torch.tensor([MCEventIndices.TRUE_NEUTRINO_ENERGY.value,  MCEventIndices.RECO_NEUTRINO_ENERGY.value, MCEventIndices.DUMMY.value]))
+        assert expected_rows == result, f"Spline indices are {result} but expected {expected_rows}"
+
+def test_spline_handler():
+    model = SplineTest()
+    model.test_flat_spline()
+    model.test_non_flat_spline()
+    model.test_monolith()
+
+def test_spline_model():
+    model = SplineModelTest()
+    model.test_file_opening()
+    model.test_spline_mc_monolith()

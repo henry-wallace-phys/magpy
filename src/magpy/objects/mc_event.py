@@ -14,6 +14,7 @@ class MCEventIndices(Enum):
     START_NU = 4
     END_NU = 5
     WEIGHT = 6
+    DUMMY = -1
 
 
 @dataclass
