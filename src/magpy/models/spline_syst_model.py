@@ -13,8 +13,11 @@ from magpy.file_io.systematic_file import SystematicFile, SystematicHandler
 from magpy.utils.modes import SplineModes, bins_to_spline_name
 from magpy.objects.mc_event import MCEventMonolith, MCEventIndices
 from magpy.objects.spline_handler import SplineMonolith
+from magpy.utils.device_manager import DeviceManager
 
 class SplineSystematicModel:
+    DEVICE = DeviceManager().get_device()
+
     def __init__(self, spline_file: SplineFile, systematics: SystematicFile | SystematicHandler):
         self.spline_file = spline_file
         if isinstance(systematics, SystematicFile):
@@ -53,7 +56,7 @@ class SplineSystematicModel:
                     output = [isyst, spline_idx, mode]
                     output.extend(bins.tolist())
                     out_list.append(output)
-        self._index_tensor = torch.tensor(out_list, dtype=torch.int)
+        self._index_tensor = torch.tensor(out_list, dtype=torch.int64, device=self.DEVICE)
         self.spline_file.monolith.map_splines_to_syst(self._index_tensor[:,self.SYST_INDEX:self.SPLINE_INDEX+1])
 
     def get_monolith_splines(
@@ -62,7 +65,7 @@ class SplineSystematicModel:
         """Find the bin for each event in the monolith, bins must be in order x,y,z,..."""
         use_dummy = MCEventIndices.DUMMY.value in bin_indices
 
-        self._bins = torch.cat([torch.tensor([MCEventIndices.INTERACTION_MODE.value]), bin_indices], dim=0)
+        self._bins = torch.cat([torch.tensor([MCEventIndices.INTERACTION_MODE.value],device=self.DEVICE), bin_indices], dim=0)
 
         monolith_kinematics = mc_event_monolith.monolith[
             :, bin_indices[bin_indices != MCEventIndices.DUMMY.value]
@@ -98,7 +101,7 @@ class SplineSystematicModel:
         index_keys = self._index_tensor[:, self.MODE_INDEX:].contiguous()
         
         # Create mapping from index tuple to spline indices
-        self._event_to_spline_map = torch.full((len(full_index_array),), -1, dtype=torch.long)
+        self._event_to_spline_map = torch.full((len(full_index_array),), -1, dtype=torch.long, device=self.DEVICE)
                 
         # Vectorized matching - much faster than the loop
         for i, event_idx in enumerate(full_index_array):
@@ -116,9 +119,7 @@ class SplineSystematicModel:
         self._valid_event_indices = torch.where(valid_mask)[0]
         
         # Saves rebuilding every loop
-        self._spline_value_arr = torch.zeros(len(self._index_tensor), dtype=torch.float64)
-
-
+        self._spline_value_arr = torch.zeros(len(self._index_tensor), dtype=torch.float64, device=self.DEVICE)
         return self._event_to_spline_map
 
     

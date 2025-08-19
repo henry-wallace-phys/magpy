@@ -4,6 +4,7 @@ from scipy.interpolate import CubicSpline
 import torch
 
 from magpy.Exceptions import MagpySplineException
+from magpy.utils.device_manager import DeviceManager
 
 # '''
 # Code for defining spline objects in Torch
@@ -17,13 +18,15 @@ class Spline:
 
         if self._is_flat:
             self._spline_stack = torch.tensor(
-                [0, 0, 0, 0, 0], dtype=torch.float64, device=x.device
+                [0, 0, 0, 0, 0], dtype=torch.float64, device=DeviceManager().get_device()
             )
+            self._spline_stack = self._spline_stack.to(DeviceManager().get_device())
         else:
             spline = CubicSpline(x.cpu().numpy(), y.cpu().numpy())
             knots = torch.tensor(spline.x).to(device=x.device, dtype=torch.float64)
             coefs = torch.tensor(spline.c).to(device=x.device, dtype=torch.float64)
             self._spline_stack = torch.vstack((knots[:-1], coefs)).T
+            self._spline_stack.to(torch.float64).to(DeviceManager().get_device())
 
     @property
     def spline(self):
@@ -41,7 +44,8 @@ class Spline:
 
 
 class SplineMonolith:
-    FLAT_SPLINE = torch.tensor([0, 0, 0, 0, 0], dtype=torch.float64)
+    DEVICE = DeviceManager().get_device()
+    FLAT_SPLINE = torch.tensor([0, 0, 0, 0, 0], dtype=torch.float64, device=DEVICE)
 
     def __init__(self, splines: List[Spline]):
         # Indices
@@ -51,19 +55,21 @@ class SplineMonolith:
             raise MagpySplineException("No splines provided to monolith")
 
         self._indices = torch.cumsum(
-            torch.tensor([len(spline) for spline in splines]), dim=0
+            torch.tensor([len(spline) for spline in splines], dtype=torch.int64, device=self.DEVICE), dim=0,
         )
         # flat splines
 
         self._flat_splines = torch.tensor(
-            [spline._is_flat for spline in splines], dtype=torch.bool
+            [spline._is_flat for spline in splines], dtype=torch.bool,
+            device=self.DEVICE
         )
 
         # Spline monolith
 
         self._spline_monolith = torch.vstack(
-            [spline.spline for spline in splines if not spline.is_flat]
+            [spline.spline for spline in splines if not spline.is_flat],
         )
+        self._spline_monolith = self._spline_monolith.to(self.DEVICE)
 
         self._spline_syst_map = None
 
@@ -74,13 +80,13 @@ class SplineMonolith:
     def _setup_fast_lookup(self):
         """Pre-calculate lookup structures for fast spline evaluation"""
         # Pre-calculate knot ranges for each non-flat spline
-        self._knot_ranges = torch.zeros((self._indices.shape[0], 2), dtype=torch.int64)
+        self._knot_ranges = torch.zeros((self._indices.shape[0], 2), dtype=torch.int64, device=self.DEVICE)
         for i in range(self._indices.shape[0]):
             if i == 0:
                 low, high = 0, self._indices[0]
             else:
                 low, high = self._indices[i - 1], self._indices[i]
-            self._knot_ranges[i] = torch.tensor([low, high])
+            self._knot_ranges[i] = torch.tensor([low, high], device=self.DEVICE)
 
         # Pre-extract all knot sequences for faster access
         self._knot_sequences = []
@@ -89,7 +95,7 @@ class SplineMonolith:
             self._knot_sequences.append(knots)
 
     def map_splines_to_syst(self, spline_syst_map: torch.Tensor):
-        self._spline_syst_map = spline_syst_map
+        self._spline_syst_map = spline_syst_map.to(self.DEVICE)
         self._dim = len(spline_syst_map)
         self._n_syst = len(torch.unique(self._spline_syst_map[:, 0]))
 
@@ -98,16 +104,16 @@ class SplineMonolith:
         # We can also cache the number of splines for each index
         self._par_splines = []
         # Remove flat splines from spline syst map
-        non_flat_spline_syst_map = spline_syst_map[spline_syst_map[:,1][~self._flat_splines]]
+        non_flat_spline_syst_map = self._spline_syst_map[self._spline_syst_map[:,1][~self._flat_splines]]
 
         for i in range(self._n_syst):
             # Get all splines for this systematic
             splines_for_par = non_flat_spline_syst_map[non_flat_spline_syst_map[:, 0] == i][:,1]
             self._par_splines.append(splines_for_par)
-        
-        self._weights = torch.ones(self._dim, dtype=torch.float64)
-        self._par_arr = torch.zeros(self._dim, dtype=torch.float64)
-        self._knot_indices = torch.zeros(self._dim, dtype=torch.int64)
+
+        self._weights = torch.ones(self._dim, dtype=torch.float64, device=self.DEVICE)
+        self._par_arr = torch.zeros(self._dim, dtype=torch.float64, device=self.DEVICE)
+        self._knot_indices = torch.zeros(self._dim, dtype=torch.int64, device=self.DEVICE)
     
         
     def __getitem__(self, item: int):

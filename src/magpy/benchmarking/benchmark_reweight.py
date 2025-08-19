@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 import torch
+from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -14,11 +15,14 @@ from magpy.oscillator.oscillator import Oscillator
 from magpy.file_io.systematic_file import SystematicFile
 from magpy.file_io.mc_file import MCFile
 from magpy.objects.mc_event import MCEventIndices
+from magpy.utils.device_manager import DeviceManager
 
 def benchmark_reweight(n_iter: int = 50):
     """
     Benchmark the reweighting process.
     """
+    device = DeviceManager().get_device()
+
     # Load the spline file
     data_folder = Path(__file__).parent.parent / "tests" / "data"
 
@@ -50,19 +54,19 @@ def benchmark_reweight(n_iter: int = 50):
 
     bin_vars = torch.tensor([MCEventIndices.TRUE_NEUTRINO_ENERGY.value,
                              MCEventIndices.TRUE_Q2.value,
-                             MCEventIndices.DUMMY.value])
+                             MCEventIndices.DUMMY.value], device=device)
 
     handler = SampleModel(mc_file, spline_file, syst_file, oscillator=oscillator)
 
     handler.set_bin_variables(bin_vars)
     handler.initialise_mc_indices()
-    osc_reweight = torch.tensor([0.31,0.02, 0.55, 0.7 * torch.pi, 7.5e-5, 2.5e-3])
-    syst_vals = torch.tensor([1.1, 1.1, 1.1, 1.1, 1.1])
+    osc_reweight = torch.tensor([0.31,0.02, 0.55, 0.7 * torch.pi, 7.5e-5, 2.5e-3], device=device)
+    syst_vals = torch.tensor([1.1, 1.1, 1.1, 1.1, 1.1], device=device)
 
 
     times = np.zeros(n_iter)
 
-    for i in range(n_iter):
+    for i in tqdm(range(n_iter), total=n_iter, desc="Reweighting Benchmark"):
         osc_mod = osc_reweight.clone() * (
                 1.0001 + (np.random.uniform(0, 1) / (n_iter * 100))
             )
@@ -85,7 +89,7 @@ def plot_hist(times, plot_file="reweight_histogram.png"):
     Plot a histogram of the reweighting times.
     """
 
-    plt.hist(times * 1000, bins=50, alpha=0.7)
+    plt.hist(times * 1000, bins=100, alpha=0.7)
     plt.xlabel("Reweight Time (milliseconds)")
     plt.title("Reweighting Time Histogram")
     plt.grid()

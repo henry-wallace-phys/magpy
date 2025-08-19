@@ -1,9 +1,12 @@
 import torch
 from magpy.utils.bin_handler import BinHandler
 
-TEST_KINEMATIC_INDICES = torch.tensor([0.1, 2, 100, 1], dtype=torch.float32)
+from magpy.utils.device_manager import DeviceManager
 
-EXPECTED_BIN_INDICES = torch.tensor([0, 2, 5, 1], dtype=torch.int)
+DEVICE = DeviceManager().get_device()
+
+TEST_KINEMATIC_INDICES = torch.tensor([0.1, 2, 100, 1], dtype=torch.float32, device=DEVICE)
+EXPECTED_BIN_INDICES = torch.tensor([0, 2, 5, 1], dtype=torch.int, device=DEVICE)
 
 EXPECTED_BINS = torch.tensor(
     [
@@ -12,6 +15,7 @@ EXPECTED_BINS = torch.tensor(
         [[0.0000, 1.5000], [1.5000, 2.5000], [0.0000, 1.5000]],
     ],
     dtype=torch.float32,
+    device=DEVICE
 )
 
 
@@ -21,7 +25,7 @@ def test_bin_index_conversion():
     """
     bin_edges = [[0, 1.5, 2.5, 3.5], [0, 1.5, 2.5, 3.5, 4.5, 5.5], [0, 1.5]]
 
-    indices = torch.tensor([0, 1, 2])
+    indices = torch.tensor([0, 1, 2], device=DEVICE)
 
     expected_bins = torch.tensor(
         [
@@ -30,6 +34,7 @@ def test_bin_index_conversion():
             [[0.0000, 1.5000], [2.5000, 3.5000], [0.0000, 1.5000]],
         ],
         dtype=torch.float32,
+        device=DEVICE
     )
 
     handler = BinHandler(bin_edges)
@@ -47,9 +52,9 @@ def test_bin_finding():
     """
     bin_edges = [[0, 1.5, 2.5, 3.5], [0, 1.5, 2.5, 3.5, 4.5, 5.5], [0, 1.5]]
 
-    kinematics = torch.tensor([[0.1, 6, -0.5], [2, 4, 1]], dtype=torch.float32)
+    kinematics = torch.tensor([[0.1, 6, -0.5], [2, 4, 1]], dtype=torch.float32, device=DEVICE)
 
-    expected_output = torch.tensor([[0, 5, -1], [1, 3, 0]], dtype=torch.int)
+    expected_output = torch.tensor([[0, 5, -1], [1, 3, 0]], dtype=torch.int, device=DEVICE)
 
     handler = BinHandler(bin_edges)
 

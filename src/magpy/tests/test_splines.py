@@ -11,18 +11,23 @@ from magpy.file_io.spline_file import SplineFile
 from magpy.models.spline_syst_model import SplineSystematicModel
 from magpy.objects.systematic_handler import SystematicHandler, Systematic
 from magpy.objects.mc_event import MCEventMonolith, MCEvent, MCEventIndices
-
+from magpy.utils.device_manager import DeviceManager
 
 # Test file loading
 class SplineTest:
+    DEVICE = DeviceManager().get_device()
+
     flat_spline = Spline(
-        torch.tensor([0, 1, 2, 3], dtype=torch.float64),
-        torch.tensor([0, 0, 0, 0], dtype=torch.float64),
+        torch.tensor([0, 1, 2, 3], dtype=torch.float64, device=DEVICE),
+        torch.tensor([0, 0, 0, 0], dtype=torch.float64, device=DEVICE),
     )
 
-    flat_response = torch.tensor([0, 0, 0, 0, 0], dtype=torch.float64)
+    flat_response = torch.tensor([0, 0, 0, 0, 0], dtype=torch.float64, device=DEVICE)
 
-    non_flat_spline = Spline(torch.tensor([0, 1, 2, 3]), torch.tensor([0, 1, 2, 3]))
+    non_flat_spline = Spline(
+        torch.tensor([0, 1, 2, 3], dtype=torch.float64, device=DEVICE),
+        torch.tensor([0, 1, 2, 3], dtype=torch.float64, device=DEVICE),
+    )
     non_flat_response = torch.tensor(
         [
             [0.0, 0.0, 0.0, 1.0, 0.0],
@@ -30,12 +35,16 @@ class SplineTest:
             [2.0, 0.0, 0.0, 1.0, 2.0],
         ],
         dtype=torch.float64,
+        device=DEVICE,
     )
 
     def test_spline(self, spline: Spline, expected: torch.Tensor):
+        spline_test = spline.spline.to(DeviceManager().get_device())
+        expected_test = expected.to(DeviceManager().get_device())
+
         assert torch.isclose(
-            spline.spline, expected, rtol=1e-8, atol=1e-8
-        ).all(), f"Expected {expected}, but got {spline.spline}"
+            spline_test, expected_test, rtol=1e-8, atol=1e-8
+        ).all(), f"Expected {expected_test}, but got {spline_test}"
 
     def test_flat_spline(self):
         """Check behaviour for flat splines"""
@@ -53,6 +62,7 @@ class SplineTest:
 
         spline_monolith = SplineMonolith([self.flat_spline, self.non_flat_spline])
         # Check indexing is done
+
         assert torch.isclose(
             spline_monolith[0], self.flat_spline.spline, rtol=1e-8, atol=1e-8
         ).all(), f"Expected {self.flat_spline.spline}, but got {spline_monolith[0]}"
@@ -60,10 +70,10 @@ class SplineTest:
             spline_monolith[1], self.non_flat_spline.spline, rtol=1e-8, atol=1e-8
         ).all(), f"Expected {self.non_flat_spline.spline}, but got {spline_monolith[1]}"
 
-        x_vals = torch.tensor([10, 1.5])
+        x_vals = torch.tensor([10, 1.5], dtype=torch.float64, device=self.DEVICE)
         assert torch.isclose(
             spline_monolith(x_vals),
-            torch.tensor([1, 1.5], dtype=torch.float64),
+            torch.tensor([1, 1.5], dtype=torch.float64, device=self.DEVICE),
             rtol=1e-8,
             atol=1e-8,
         ).all(), f"Expected {[1, 1.5]}, but got {spline_monolith(x_vals)}"
@@ -71,6 +81,8 @@ class SplineTest:
 
 class SplineModelTest:
     spline_file_path = Path(__file__).parent / "data" / "converted_splines.root"
+    DEVICE = DeviceManager().get_device()
+
     systs = [
         Systematic(
             syst_name="mysyst1",
@@ -133,7 +145,7 @@ class SplineModelTest:
             model.index_tensor.shape[1] == 6
         ), f"Model index tensor should have 6 columns, instead got {model.index_tensor.shape[1]}"
         assert torch.equal(
-            model.index_tensor[0], torch.tensor([0, 0, 0, 0, 0, 0], dtype=torch.int64)
+            model.index_tensor[0], torch.tensor([0, 0, 0, 0, 0, 0], dtype=torch.int64, device=self.DEVICE)
         ), f"First row of index tensor should be [0, 0, 0, 0, 0, 0], instead got {model.index_tensor[0]}"
 
     def test_spline_mc_monolith(self):
@@ -186,8 +198,9 @@ class SplineModelTest:
                     MCEventIndices.TRUE_NEUTRINO_ENERGY.value,
                     MCEventIndices.RECO_NEUTRINO_ENERGY.value,
                     MCEventIndices.DUMMY.value,
-                ]
-            ),
+                ],
+                device=self.DEVICE
+            )
         )
         
         

@@ -6,6 +6,7 @@ from magpy.file_io.root_file import RootFile
 from magpy.objects.spline_handler import Spline, SplineMonolith
 from magpy.utils.bin_handler import BinHandler
 from magpy.Exceptions import MagpyInvalidObjectError
+from magpy.utils.device_manager import DeviceManager
 
 """
 Note: This file needs to be in the ROOT file format expected in the magpy ecosystem
@@ -17,6 +18,7 @@ file -> syst_name -> TGraphs
 
 class SplineFile(RootFile):
     """Spline file handler for the magpy ecosystem."""
+    DEVICE = DeviceManager().get_device()
 
     BINNING_HIST_STR = "dev_tmp.0.0;1"
 

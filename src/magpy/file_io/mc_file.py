@@ -8,12 +8,13 @@ from magpy.file_io.root_file import RootFile
 from magpy.objects.mc_event import MCEvent, MCEventMonolith, MCEventIndices
 from magpy.Exceptions import MagpyInvalidObjectError, MagpyModeNotFoundException
 from magpy.utils.modes import SplineModes
+from magpy.utils.device_manager import DeviceManager
 import numpy as np
 
 
 class MCFile(RootFile):
     CONST_BRANCH="__CONST__"
-    
+
     def __init__(self, file_name: str, tree_name: str = "mc_tree") -> None:
         super().__init__(file_name)
         self.mc_tree = self.get_root_object(tree_name)

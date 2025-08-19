@@ -7,7 +7,7 @@ import warnings
 
 import numpy as np
 import torch
-
+from magpy.utils.device_manager import DeviceManager
 
 class OutOfBoundsBinWarning(Warning):
     pass
@@ -15,9 +15,7 @@ class OutOfBoundsBinWarning(Warning):
 
 class BinHandler:
     def __init__(self, bin_edges: List[List[float]]):
-
-        # Whole thing can't be tensor but we can make this one
-        self.bin_edges = [torch.tensor(b) for b in bin_edges]
+        self.bin_edges = [torch.tensor(b, device=DeviceManager().get_device()) for b in bin_edges]
         self._bin_edge_dims = [len(b) - 1 for b in bin_edges]
         self._bin_edge_tensor, self._bin_edge_indices = self._generate_bin_tuples()
 
@@ -27,13 +25,13 @@ class BinHandler:
 
         i.e. [(0,0,0), (0,0,1), ...]
         """
-        idx_list = torch.tensor(list(np.ndindex(*self._bin_edge_dims)))
+        idx_list = torch.tensor(list(np.ndindex(*self._bin_edge_dims)), device=DeviceManager().get_device())
 
         # Now put BACK in the bin edges
         bin_list = torch.zeros(
-            (len(idx_list), len(self.bin_edges), 2), dtype=torch.float32
+            (len(idx_list), len(self.bin_edges), 2), dtype=torch.float32, device=DeviceManager().get_device()
         )
-        index_list = torch.zeros((len(idx_list), len(self.bin_edges)), dtype=torch.int)
+        index_list = torch.zeros((len(idx_list), len(self.bin_edges)), dtype=torch.int, device=DeviceManager().get_device())
         for i, indices in enumerate(idx_list):
             for j, idx in enumerate(indices):
                 bin_list[i, j] = self.bin_edges[j][idx : idx + 2]

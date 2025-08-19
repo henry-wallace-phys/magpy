@@ -131,9 +131,6 @@ def test_oscillator(
         final_osc_chans.extend(osc_combs)
         final_energies.extend([E_ENERGY] * len(osc_combs))
 
-    print(final_energies)
-    print(final_osc_chans)
-            
     final_osc_chans = torch.tensor(final_osc_chans)
     osc_in = final_osc_chans[:, 0]
 

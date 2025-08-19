@@ -11,6 +11,7 @@ import torch
 from magpy.Exceptions import MagpyProbabilityException
 from magpy.objects.mc_event import MCEventMonolith, MCEventIndices
 
+from magpy.utils.device_manager import DeviceManager
 
 class NuType(Enum):
     E = 12
@@ -52,23 +53,28 @@ class Oscillator:
         self.ye = ye
         self.n_newton = n_newton
 
+
+        self._device = 'cpu'
+
         self.current_osc_pars = torch.tensor(
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=torch.float64
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=torch.float64,
+            device=self._device
         )
-        self.current_weights = torch.tensor([], dtype=torch.float64)
+        self.current_weights = torch.tensor([], dtype=torch.float64,
+                                            device=self._device)
 
         self.eVsqkm_to_GeV_over4 = 1e-9 / 1.97327e-7 * 1e3 / 4
         self.YerhoE2a = 1.52588e-4
 
         self._setup = False
-    
-        self._energy = torch.tensor([], dtype=torch.float64)
-        self._osc_in = torch.tensor([], dtype=torch.int64)
-        self._osc_out = torch.tensor([], dtype=torch.int64)
+
+        self._energy = torch.tensor([], dtype=torch.float64, device=self._device)
+        self._osc_in = torch.tensor([], dtype=torch.int64, device=self._device)
+        self._osc_out = torch.tensor([], dtype=torch.int64, device=self._device)
         self._masks: List[List[torch.Tensor]] = [[]]
         self._calc_tau: bool = True
-        self._Lover4E = torch.tensor(0.0, dtype=torch.float64)
-        self._Amatter = torch.tensor(0.0, dtype=torch.float64)
+        self._Lover4E = torch.tensor(0.0, dtype=torch.float64, device=self._device)
+        self._Amatter = torch.tensor(0.0, dtype=torch.float64, device=self._device)
 
     
     # We can set up a bunch of masks etc. now for optimization
@@ -76,6 +82,8 @@ class Oscillator:
         self._energy = energy
         self._osc_in = osc_in
         self._osc_out = osc_out
+
+        device = self._energy.device
 
         if len(self._energy) != len(self._osc_in) != len(self._osc_out):
             raise MagpyProbabilityException(
@@ -108,7 +116,7 @@ class Oscillator:
         # Might as well do constants now    
         self._Lover4E = self.eVsqkm_to_GeV_over4 * self.L / self._energy        
         self._Amatter = self.ye * self.rho * self._energy * self.YerhoE2a
-
+        self.current_osc_pars = torch.zeros(6, dtype=torch.float64, device=self._energy.device)
         self._setup = True
 
 
@@ -136,8 +144,6 @@ class Oscillator:
         s12sq = osc_params[OscParIndex.S12SQ.value]
         s23sq = osc_params[OscParIndex.S23SQ.value]
 
-        # osc_in = osc_in.to(torch.int64)
-        # osc_out = osc_out.to(torch.int64)
         self.current_osc_pars = osc_params
 
 
@@ -212,7 +218,7 @@ class Oscillator:
         # ---------------------------------------------------------------------------- #
         B = Tmm + self._Amatter * See  # B is only needed for N_Newton >= 1
         for _ in range(self.n_newton):
-            lambda3 = (lambda3 * lambda3 * (lambda3 + lambda3 - A) + C) / (
+            lambda3 = (lambda3 * lambda3 * (lambda3 + lambda3 - A) + C) * torch.reciprocal(
                 lambda3 * (2 * (lambda3 - A) + lambda3) + B
             )  # this strange form prefers additions to multiplications
 
@@ -220,7 +226,7 @@ class Oscillator:
         # Get  Delta lambda's #
         # ------------------- #
         tmp = A - lambda3
-        Dlambda21 = torch.sqrt(tmp * tmp - 4 * C / lambda3)
+        Dlambda21 = torch.sqrt(tmp * tmp - 4 * C * torch.reciprocal(lambda3))
         lambda2 = 0.5 * (A - lambda3 + Dlambda21)
         Dlambda32 = lambda3 - lambda2
         Dlambda31 = Dlambda32 + Dlambda21
@@ -229,7 +235,7 @@ class Oscillator:
         # Use Rosetta for Veisq's #
         # ----------------------- #
         # denominators
-        PiDlambdaInv = 1 / (Dlambda31 * Dlambda32 * Dlambda21)
+        PiDlambdaInv = torch.reciprocal(Dlambda31 * Dlambda32 * Dlambda21)
         Xp3 = PiDlambdaInv * Dlambda21
         Xp2 = -PiDlambdaInv * Dlambda31
 
@@ -284,9 +290,9 @@ class Oscillator:
 
         triple_sin = sinD21 * sinD31 * sinD32
 
-        sinsqD21_2 = 2 * torch.pow(sinD21, 2)
-        sinsqD31_2 = 2 * torch.pow(sinD31, 2)
-        sinsqD32_2 = 2 * torch.pow(sinD32, 2)
+        sinsqD21_2 = 2 * torch.square(sinD21)
+        sinsqD31_2 = 2 * torch.square(sinD31)
+        sinsqD32_2 = 2 * torch.square(sinD32)
 
         # ------------------------------------------------------------------- #
         # Calculate the three necessary probabilities, separating CPC and CPV #

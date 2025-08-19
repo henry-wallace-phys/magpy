@@ -3,7 +3,7 @@ from enum import Enum
 
 import torch
 
-# Hard coding for now!
+from magpy.utils.device_manager import DeviceManager
 
 
 class MCEventIndices(Enum):
@@ -22,6 +22,9 @@ class MCEventIndices(Enum):
 
 @dataclass
 class MCEvent:
+    '''
+    Represents a single event in the mc
+    '''
     true_neutrino_energy: float  # True neutrino energy
     true_q2: float  # True Q2
     reco_neutrino_energy: float  # Reconstructed neutrino energy
@@ -46,6 +49,8 @@ class MCEvent:
                 0.0,  # Placeholder for weight, can be set later
             ],
             dtype=torch.float64,
+            device = DeviceManager().get_device()
+
         )
 
 
@@ -55,7 +60,7 @@ class MCEventMonolith:
             [event.to_tensor() for event in mc_event_list]
         )
         
-        self._mc_event_monolith.to(torch.float64)
+        self._mc_event_monolith.to(torch.float64).to(DeviceManager().get_device())
         
         self._n_events = len(mc_event_list)
 
