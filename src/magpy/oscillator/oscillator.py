@@ -159,6 +159,7 @@ class Oscillator:
         
         # Pre-allocate other intermediate tensors
         self._tmp = torch.zeros(n_events, dtype=torch.float64, device=device)
+        self._tmp2 = torch.zeros(n_events, dtype=torch.float64, device=device)  # Additional temp tensor
         self._xmat = torch.zeros(n_events, dtype=torch.float64, device=device)
         self._PiDlambdaInv = torch.zeros(n_events, dtype=torch.float64, device=device)
         self._Xp2 = torch.zeros(n_events, dtype=torch.float64, device=device)
@@ -173,6 +174,9 @@ class Oscillator:
         self._Ut_terms = torch.zeros((n_events, 3), dtype=torch.float64, device=device)
         self._Um_terms = torch.zeros((n_events, 3), dtype=torch.float64, device=device)
         self._Ue_terms = torch.zeros((n_events, 3), dtype=torch.float64, device=device)
+
+        # Pre-allocate vectorized U-matrix calculation tensors
+        self._U_stack = torch.zeros((n_events, 9), dtype=torch.float64, device=device)  # For all 9 U elements
 
         # Now to set up masks for oscillations in/out - create masks but only for torch.where usage
         self._mask_em = (self._osc_in == NuType.E.value) & (self._osc_out == NuType.Mu.value)
@@ -221,23 +225,28 @@ class Oscillator:
 
         self.current_osc_pars = osc_params
 
-        c13sq = 1 - s13sq
+        # Handle both scalar and tensor cases for rsub avoidance
+        if torch.is_tensor(s13sq) and s13sq.dim() > 0:
+            torch.sub(1, s13sq, out=self._tmp)
+            c13sq = self._tmp
+        else:
+            c13sq = 1 - s13sq
 
         # Ueisq's
         Ue2sq = c13sq * s12sq
         Ue3sq = s13sq
 
-        # Umisq's, Utisq's and Jvac
+        # Umisq's, Utisq's and Jvac - handle scalar/tensor cases
         Um3sq = c13sq * s23sq
-        # Um2sq and Ut2sq are used here as temporary variables, will be properly defined later
-        Ut2sq = (
-            s13sq
-            * s12sq
-            * s23sq
-        )
-        Um2sq = (1 - s12sq) * (
-            1 - s23sq
-        )
+        Ut2sq = s13sq * s12sq * s23sq
+        
+        # Handle scalar/tensor cases for Um2sq calculation
+        if torch.is_tensor(s12sq) and s12sq.dim() > 0:
+            torch.sub(1, s12sq, out=self._tmp)   # tmp = 1 - s12sq  
+            torch.sub(1, s23sq, out=self._tmp2)  # tmp2 = 1 - s23sq
+            Um2sq = self._tmp * self._tmp2
+        else:
+            Um2sq = (1 - s12sq) * (1 - s23sq)
 
         Jrr = torch.sqrt(Um2sq * Ut2sq)
 
@@ -248,24 +257,20 @@ class Oscillator:
         Jmatter = 8 * Jrr * c13sq * sind
 
         # With E
-        Dmsqee = (
-            dmsq31
-            - s12sq * dmsq21
-        )  # Dmsq21
+        Dmsqee = dmsq31 - s12sq * dmsq21
 
         # calculate A, B, C, See, Tee, and part of Tmm
-        A = (
-            dmsq21 + dmsq31
-        )  # temporary variable
-        See = (
-            A
-            - dmsq21 * Ue2sq
-            - dmsq31 * Ue3sq
-        )
-        Tmm = (
-            dmsq21 * dmsq31
-        )  # using Tmm as a temporary variable
-        Tee = Tmm * (1 - Ue3sq - Ue2sq)
+        A = dmsq21 + dmsq31
+        See = A - dmsq21 * Ue2sq - dmsq31 * Ue3sq
+        Tmm = dmsq21 * dmsq31
+        
+        # Handle scalar/tensor cases for Tee calculation to avoid rsub
+        if torch.is_tensor(Ue3sq) and Ue3sq.dim() > 0:
+            torch.sub(1, Ue3sq, out=self._tmp)         # tmp = 1 - Ue3sq
+            torch.sub(self._tmp, Ue2sq, out=self._tmp) # tmp = tmp - Ue2sq = 1 - Ue3sq - Ue2sq
+            Tee = Tmm * self._tmp
+        else:
+            Tee = Tmm * (1 - Ue3sq - Ue2sq)
 
         # E
         C = self._Amatter * Tee
@@ -314,12 +319,16 @@ class Oscillator:
         torch.mul((self._lambda3 * (self._lambda3 - See) + Tee), self._Xp3, out=self._Ue3sq)
         torch.mul((self._lambda2 * (self._lambda2 - See) + Tee), self._Xp2, out=self._Ue2sq)
 
-        Smm = (
-            A
-            - dmsq21 * Um2sq
-            - dmsq31 * Um3sq
-        )
-        Tmm = Tmm * (1 - Um3sq - Um2sq) + self._Amatter * (See + Smm - A)
+        Smm = A - dmsq21 * Um2sq - dmsq31 * Um3sq
+        
+        # Optimize (See + Smm - A) calculation to avoid rsub
+        See_plus_Smm_minus_A = See + Smm - A        # Handle scalar/tensor cases for Tmm calculation to avoid rsub
+        if torch.is_tensor(Um3sq) and Um3sq.dim() > 0:
+            torch.sub(1, Um3sq, out=self._tmp)         # tmp = 1 - Um3sq
+            torch.sub(self._tmp, Um2sq, out=self._tmp) # tmp = tmp - Um2sq = 1 - Um3sq - Um2sq
+            Tmm = Tmm * self._tmp + self._Amatter * See_plus_Smm_minus_A
+        else:
+            Tmm = Tmm * (1 - Um3sq - Um2sq) + self._Amatter * See_plus_Smm_minus_A
 
         torch.mul((self._lambda3 * (self._lambda3 - Smm) + Tmm), self._Xp3, out=self._Um3sq)
         torch.mul((self._lambda2 * (self._lambda2 - Smm) + Tmm), self._Xp2, out=self._Um2sq)
@@ -341,12 +350,21 @@ class Oscillator:
         # ----------------------- #
         # Get all elements of Usq #
         # ----------------------- #
-        torch.sub(1 - self._Ue3sq, self._Ue2sq, out=self._Ue1sq)
-        torch.sub(1 - self._Um3sq, self._Um2sq, out=self._Um1sq)
+        # Revert to working individual operations for correctness
+        torch.sub(1, self._Ue3sq, out=self._tmp)  # tmp = 1 - Ue3sq
+        torch.sub(self._tmp, self._Ue2sq, out=self._Ue1sq)  # Ue1sq = tmp - Ue2sq
+        
+        torch.sub(1, self._Um3sq, out=self._tmp)  # tmp = 1 - Um3sq
+        torch.sub(self._tmp, self._Um2sq, out=self._Um1sq)  # Um1sq = tmp - Um2sq
 
-        torch.sub(1 - self._Um3sq, self._Ue3sq, out=self._Ut3sq)
-        torch.sub(1 - self._Um2sq, self._Ue2sq, out=self._Ut2sq)
-        torch.sub(1 - self._Um1sq, self._Ue1sq, out=self._Ut1sq)
+        torch.sub(1, self._Um3sq, out=self._tmp)  # tmp = 1 - Um3sq
+        torch.sub(self._tmp, self._Ue3sq, out=self._Ut3sq)  # Ut3sq = tmp - Ue3sq
+        
+        torch.sub(1, self._Um2sq, out=self._tmp)  # tmp = 1 - Um2sq
+        torch.sub(self._tmp, self._Ue2sq, out=self._Ut2sq)  # Ut2sq = tmp - Ue2sq
+        
+        torch.sub(1, self._Um1sq, out=self._tmp)  # tmp = 1 - Um1sq
+        torch.sub(self._tmp, self._Ue1sq, out=self._Ut1sq)  # Ut1sq = tmp - Ue1sq
 
         # ----------------------- #
         # Get the kinematic terms #
@@ -385,37 +403,34 @@ class Oscillator:
         # Calculate the three necessary probabilities, separating CPC and CPV #
         # ------------------------------------------------------------------- #
         
-        # Vectorize the pme_CPC calculation - compute all three terms at once
-        Ut_terms = torch.stack([
-            self._Ut3sq - self._Um2sq * self._Ue1sq - self._Um1sq * self._Ue2sq,
-            self._Ut2sq - self._Um3sq * self._Ue1sq - self._Um1sq * self._Ue3sq,
-            self._Ut1sq - self._Um3sq * self._Ue2sq - self._Um2sq * self._Ue3sq
-        ], dim=-1)
+        # Revert to working individual calculations for correctness
+        # Fill pre-allocated Ut_terms stack
+        self._Ut_terms[:, 0] = self._Ut3sq - self._Um2sq * self._Ue1sq - self._Um1sq * self._Ue2sq
+        self._Ut_terms[:, 1] = self._Ut2sq - self._Um3sq * self._Ue1sq - self._Um1sq * self._Ue3sq
+        self._Ut_terms[:, 2] = self._Ut1sq - self._Um3sq * self._Ue2sq - self._Um2sq * self._Ue3sq
         
-        sinsq_stack = torch.stack([self._sinsqD21_2, self._sinsqD31_2, self._sinsqD32_2], dim=-1)
-        
-        # Single vectorized multiplication and sum
-        torch.sum(Ut_terms * sinsq_stack, dim=-1, out=self._pme_CPC)
+        # Single vectorized multiplication and sum using pre-allocated stacks
+        torch.sum(self._Ut_terms * self._sinsq_stack, dim=-1, out=self._pme_CPC)
         
         torch.mul(-Jmatter, self._triple_sin, out=self._pme_CPV)
 
-        # Vectorize pmm calculation
-        Um_terms = torch.stack([
-            self._Um2sq * self._Um1sq,
-            self._Um3sq * self._Um1sq, 
-            self._Um3sq * self._Um2sq
-        ], dim=-1)
+        # Fill pre-allocated Um_terms stack
+        self._Um_terms[:, 0] = self._Um2sq * self._Um1sq
+        self._Um_terms[:, 1] = self._Um3sq * self._Um1sq
+        self._Um_terms[:, 2] = self._Um3sq * self._Um2sq
         
-        torch.sub(1, 2 * torch.sum(Um_terms * sinsq_stack, dim=-1), out=self._pmm)
+        torch.sum(self._Um_terms * self._sinsq_stack, dim=-1, out=self._tmp)
+        torch.mul(2, self._tmp, out=self._tmp)  # tmp = 2 * sum
+        torch.sub(1, self._tmp, out=self._pmm)  # pmm = 1 - tmp
 
-        # Vectorize pee calculation  
-        Ue_terms = torch.stack([
-            self._Ue2sq * self._Ue1sq,
-            self._Ue3sq * self._Ue1sq,
-            self._Ue3sq * self._Ue2sq
-        ], dim=-1)
+        # Fill pre-allocated Ue_terms stack
+        self._Ue_terms[:, 0] = self._Ue2sq * self._Ue1sq
+        self._Ue_terms[:, 1] = self._Ue3sq * self._Ue1sq
+        self._Ue_terms[:, 2] = self._Ue3sq * self._Ue2sq
         
-        torch.sub(1, 2 * torch.sum(Ue_terms * sinsq_stack, dim=-1), out=self._pee)
+        torch.sum(self._Ue_terms * self._sinsq_stack, dim=-1, out=self._tmp)
+        torch.mul(2, self._tmp, out=self._tmp)  # tmp = 2 * sum
+        torch.sub(1, self._tmp, out=self._pee)  # pee = 1 - tmp
 
         # ---------------------------- #
         # Assign all the probabilities #
@@ -423,53 +438,46 @@ class Oscillator:
         torch.sub(self._pme_CPC, self._pme_CPV, out=self._pem)
         torch.add(self._pme_CPC, self._pme_CPV, out=self._pme)
 
-        # Vectorized probability assignment - batch all torch.where operations
         weights = self.current_weights
         
-        # Create a stacked mask tensor and probability tensor for vectorized assignment
+        # Batch the main probability assignments using vectorized operations
+        # Create combined mask for all non-tau transitions
+        combined_mask = self._mask_em | self._mask_me | self._mask_mm | self._mask_ee
+        
+        # Use torch.where more efficiently by combining operations
+        torch.where(self._mask_em, self._pem, weights, out=weights)
+        torch.where(self._mask_me, self._pme, weights, out=weights) 
+        torch.where(self._mask_mm, self._pmm, weights, out=weights)
+        torch.where(self._mask_ee, self._pee, weights, out=weights)
+
         if self._calc_tau:
-            # Pre-compute tau probabilities to avoid rsub in torch.where
-            torch.sub(1, self._pee, out=self._pet)
-            torch.sub(self._pet, self._pem, out=self._pet)  # pet = 1 - pee - pem
+            # Calculate tau probabilities individually - more efficient than stacking
+            # pet = 1 - pee - pem
+            torch.sub(1, self._pee, out=self._tmp)
+            torch.sub(self._tmp, self._pem, out=self._pet)
             
-            torch.sub(1, self._pme, out=self._pmt) 
-            torch.sub(self._pmt, self._pmm, out=self._pmt)  # pmt = 1 - pme - pmm
+            # pmt = 1 - pme - pmm  
+            torch.sub(1, self._pme, out=self._tmp)
+            torch.sub(self._tmp, self._pmm, out=self._pmt)
             
-            torch.sub(1, self._pem, out=self._ptm)
-            torch.sub(self._ptm, self._pmm, out=self._ptm)  # ptm = 1 - pem - pmm
+            # ptm = 1 - pem - pmm
+            torch.sub(1, self._pem, out=self._tmp)
+            torch.sub(self._tmp, self._pmm, out=self._ptm)
             
-            torch.sub(1, self._pee, out=self._pte)
-            torch.sub(self._pte, self._pme, out=self._pte)  # pte = 1 - pee - pme
+            # pte = 1 - pee - pme
+            torch.sub(1, self._pee, out=self._tmp)
+            torch.sub(self._tmp, self._pme, out=self._pte)
             
-            torch.sub(1, self._pet, out=self._ptt)
-            torch.sub(self._ptt, self._pmt, out=self._ptt)  # ptt = 1 - pet - pmt
+            # ptt = 1 - pet - pmt
+            torch.sub(1, self._pet, out=self._tmp)
+            torch.sub(self._tmp, self._pmt, out=self._ptt)
             
-            # Stack all masks and probabilities for vectorized assignment
-            mask_stack = torch.stack([
-                self._mask_em, self._mask_me, self._mask_mm, self._mask_ee,
-                self._mask_et, self._mask_mt, self._mask_tm, self._mask_te, self._mask_tt
-            ], dim=0)
-            
-            prob_stack = torch.stack([
-                self._pem, self._pme, self._pmm, self._pee,
-                self._pet, self._pmt, self._ptm, self._pte, self._ptt
-            ], dim=0)
-            
-            # Vectorized assignment - apply all masks at once
-            for i in range(mask_stack.shape[0]):
-                torch.where(mask_stack[i], prob_stack[i], weights, out=weights)
-        else:
-            # Non-tau case - simpler vectorization
-            mask_stack = torch.stack([
-                self._mask_em, self._mask_me, self._mask_mm, self._mask_ee
-            ], dim=0)
-            
-            prob_stack = torch.stack([
-                self._pem, self._pme, self._pmm, self._pee
-            ], dim=0)
-            
-            for i in range(4):
-                torch.where(mask_stack[i], prob_stack[i], weights, out=weights)
+            # Batch tau assignments
+            torch.where(self._mask_et, self._pet, weights, out=weights)
+            torch.where(self._mask_mt, self._pmt, weights, out=weights)
+            torch.where(self._mask_tm, self._ptm, weights, out=weights)
+            torch.where(self._mask_te, self._pte, weights, out=weights)
+            torch.where(self._mask_tt, self._ptt, weights, out=weights)
 
         self.current_weights = weights
 

@@ -39,6 +39,10 @@ jobs:
             source .venv/bin/activate
             uv pip install .
             ${{ matrix.compile_opts }}
+          
+      - name: Run Benchmarks
+        run: |
+            source .venv/bin/activate
             uv run magpy_benchmark --out_folder benchmarks
 
       - name: Upload benchmark results

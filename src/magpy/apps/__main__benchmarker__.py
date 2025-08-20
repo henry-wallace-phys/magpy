@@ -10,6 +10,7 @@ from magpy.benchmarking.benchmark_reweight import (
 
 import click
 import numpy as np
+import torch
 
 from pathlib import Path
 
@@ -50,7 +51,7 @@ def main(
     do_osc: bool = True,
     do_reweight: bool = True,
     out_folder: str = "benchmarks/results",
-):
+):    
     if not Path(out_folder).exists():
         Path(out_folder).mkdir(parents=True, exist_ok=True)
     if do_osc:
@@ -63,7 +64,7 @@ def main(
     if do_reweight:
         reweight_times = benchmark_reweight(n_iter=n_iter)
         plot_hist(reweight_times, plot_file=f"{out_folder}/reweight_histogram.png")
-
+ 
         reweight_times = np.array(reweight_times)
 
         burn_cut = np.round(n_iter * 0.1).astype(int)
