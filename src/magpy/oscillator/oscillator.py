@@ -10,6 +10,67 @@ from typing import List
 import torch
 from magpy.Exceptions import MagpyProbabilityException
 
+
+# JIT compile the most expensive probability calculations for maximum performance
+@torch.jit.script
+def _calc_probabilities_jit(
+    Ut3sq: torch.Tensor, Um2sq: torch.Tensor, Ue1sq: torch.Tensor, Um1sq: torch.Tensor, Ue2sq: torch.Tensor,
+    Ut2sq: torch.Tensor, Um3sq: torch.Tensor, Ue3sq: torch.Tensor,
+    Ut1sq: torch.Tensor,
+    sinsqD21_2: torch.Tensor, sinsqD31_2: torch.Tensor, sinsqD32_2: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """JIT-compiled probability calculation for maximum performance"""
+    
+    # Calculate pme_CPC using vectorized operations
+    Ut_terms_0 = Ut3sq - Um2sq * Ue1sq - Um1sq * Ue2sq
+    Ut_terms_1 = Ut2sq - Um3sq * Ue1sq - Um1sq * Ue3sq
+    Ut_terms_2 = Ut1sq - Um3sq * Ue2sq - Um2sq * Ue3sq
+    
+    pme_CPC = (Ut_terms_0 * sinsqD21_2 + 
+               Ut_terms_1 * sinsqD31_2 + 
+               Ut_terms_2 * sinsqD32_2)
+    
+    # Calculate pmm using vectorized operations
+    Um_terms_0 = Um2sq * Um1sq
+    Um_terms_1 = Um3sq * Um1sq  
+    Um_terms_2 = Um3sq * Um2sq
+    
+    pmm_sum = (Um_terms_0 * sinsqD21_2 + 
+               Um_terms_1 * sinsqD31_2 + 
+               Um_terms_2 * sinsqD32_2)
+    pmm = 1.0 - 2.0 * pmm_sum
+    
+    # Calculate pee using vectorized operations
+    Ue_terms_0 = Ue2sq * Ue1sq
+    Ue_terms_1 = Ue3sq * Ue1sq
+    Ue_terms_2 = Ue3sq * Ue2sq
+    
+    pee_sum = (Ue_terms_0 * sinsqD21_2 + 
+               Ue_terms_1 * sinsqD31_2 + 
+               Ue_terms_2 * sinsqD32_2)
+    pee = 1.0 - 2.0 * pee_sum
+    
+    return pme_CPC, pmm, pee
+
+
+# JIT compile lambda calculations which also have torch.sub operations
+@torch.jit.script
+def _calc_lambda_jit(
+    A: torch.Tensor, lambda3: torch.Tensor, C: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """JIT-compiled lambda calculation to optimize sqrt and sub operations"""
+    
+    # Get Delta lambda's
+    A_minus_lambda3 = A - lambda3
+    sqrt_term = torch.sqrt(A_minus_lambda3 * A_minus_lambda3 - 4.0 * C / lambda3)
+    Dlambda21 = sqrt_term
+    lambda2 = 0.5 * (A - lambda3 + Dlambda21)
+    Dlambda32 = lambda3 - lambda2
+    Dlambda31 = Dlambda32 + Dlambda21
+    
+    return Dlambda21, lambda2, Dlambda32, Dlambda31
+
+
 class NuType(Enum):
     E = 12
     EBar = -12
@@ -164,6 +225,11 @@ class Oscillator:
         self._PiDlambdaInv = torch.zeros(n_events, dtype=torch.float64, device=device)
         self._Xp2 = torch.zeros(n_events, dtype=torch.float64, device=device)
         self._Xp3 = torch.zeros(n_events, dtype=torch.float64, device=device)
+        
+        # Pre-allocate cosine tensors for mathematical optimization
+        self._c13sq = torch.zeros(n_events, dtype=torch.float64, device=device)
+        self._c12sq = torch.zeros(n_events, dtype=torch.float64, device=device)
+        self._c23sq = torch.zeros(n_events, dtype=torch.float64, device=device)
 
         # Pre-allocate vectorized calculation tensors for batch operations
         self._U_matrix = torch.zeros((n_events, 3, 3), dtype=torch.float64, device=device)  # Full U matrix
@@ -221,28 +287,27 @@ class Oscillator:
 
         self.current_osc_pars = osc_params
 
-        # Handle both scalar and tensor cases for rsub avoidance
+        # Pre-compute frequently used 1-x terms to reduce operations
         if torch.is_tensor(s13sq) and s13sq.dim() > 0:
-            torch.sub(1, s13sq, out=self._tmp)
-            c13sq = self._tmp
+            torch.sub(1, s13sq, out=self._c13sq)
+            torch.sub(1, s12sq, out=self._c12sq)  
+            torch.sub(1, s23sq, out=self._c23sq)
+            c13sq = self._c13sq
+            c12sq = self._c12sq
+            c23sq = self._c23sq
         else:
             c13sq = 1 - s13sq
+            c12sq = 1 - s12sq
+            c23sq = 1 - s23sq
 
-        # Ueisq's
+        # Ueisq's - more efficient calculation
         Ue2sq = c13sq * s12sq
         Ue3sq = s13sq
 
-        # Umisq's, Utisq's and Jvac - handle scalar/tensor cases
+        # Umisq's, Utisq's - use pre-computed cosines  
         Um3sq = c13sq * s23sq
+        Um2sq = c12sq * c23sq  # More efficient than (1-s12sq)*(1-s23sq)
         Ut2sq = s13sq * s12sq * s23sq
-        
-        # Handle scalar/tensor cases for Um2sq calculation
-        if torch.is_tensor(s12sq) and s12sq.dim() > 0:
-            torch.sub(1, s12sq, out=self._tmp)   # tmp = 1 - s12sq  
-            torch.sub(1, s23sq, out=self._tmp2)  # tmp2 = 1 - s23sq
-            Um2sq = self._tmp * self._tmp2
-        else:
-            Um2sq = (1 - s12sq) * (1 - s23sq)
 
         Jrr = torch.sqrt(Um2sq * Ut2sq)
 
@@ -273,13 +338,14 @@ class Oscillator:
         A = A + self._Amatter
 
         # ---------------------------------- #
-        # Get lambda3 from lambda+ of MP/DMP #
+        # Get lambda3 from lambda+ of MP/DMP - optimized calculation #
         # ---------------------------------- #
         torch.divide(self._Amatter, Dmsqee, out=self._xmat)
-        torch.sub(1, self._xmat, out=self._tmp)
+        # Pre-compute (xmat - 1) to avoid redundant calculation
+        torch.sub(self._xmat, 1, out=self._tmp)  # tmp = xmat - 1
+        # More efficient: sqrt((1-xmat)^2 + 4*s13sq*xmat) = sqrt((xmat-1)^2 + 4*s13sq*xmat)
         torch.add(dmsq31, 0.5 * Dmsqee * (
-            self._xmat
-            - 1
+            self._tmp  # xmat - 1 (pre-computed)
             + torch.sqrt(self._tmp * self._tmp + 4 * s13sq * self._xmat)
         ), out=self._lambda3)
 
@@ -288,20 +354,20 @@ class Oscillator:
         # ---------------------------------------------------------------------------- #
         B = Tmm + self._Amatter * See  # B is only needed for N_Newton >= 1
         for _ in range(self.n_newton):
-            torch.mul(
-                (self._lambda3 * self._lambda3 * (self._lambda3 + self._lambda3 - A) + C),
-                torch.reciprocal(self._lambda3 * (2 * (self._lambda3 - A) + self._lambda3) + B),
-                out=self._lambda3
-            )
+            # Optimize Newton iteration by pre-computing terms
+            lambda3_sq = self._lambda3 * self._lambda3
+            lambda3_minus_A = self._lambda3 - A
+            # Simplify: lambda3 + lambda3 - A = 2*lambda3 - A
+            numerator = lambda3_sq * (2 * self._lambda3 - A) + C
+            denominator = self._lambda3 * (3 * self._lambda3 - 2 * A) + B
+            torch.mul(numerator, torch.reciprocal(denominator), out=self._lambda3)
 
         # ------------------- #
-        # Get  Delta lambda's #
+        # Get  Delta lambda's using JIT-compiled function #
         # ------------------- #
-        torch.sub(A, self._lambda3, out=self._tmp)
-        torch.sqrt(self._tmp * self._tmp - 4 * C * torch.reciprocal(self._lambda3), out=self._Dlambda21)
-        torch.mul(0.5, (A - self._lambda3 + self._Dlambda21), out=self._lambda2)
-        torch.sub(self._lambda3, self._lambda2, out=self._Dlambda32)
-        torch.add(self._Dlambda32, self._Dlambda21, out=self._Dlambda31)
+        self._Dlambda21, self._lambda2, self._Dlambda32, self._Dlambda31 = _calc_lambda_jit(
+            A, self._lambda3, C
+        )
 
         # ----------------------- #
         # Use Rosetta for Veisq's #
@@ -309,7 +375,8 @@ class Oscillator:
         # denominators
         torch.reciprocal(self._Dlambda31 * self._Dlambda32 * self._Dlambda21, out=self._PiDlambdaInv)
         torch.mul(self._PiDlambdaInv, self._Dlambda21, out=self._Xp3)
-        torch.mul(-self._PiDlambdaInv, self._Dlambda31, out=self._Xp2)
+        torch.mul(self._PiDlambdaInv, self._Dlambda31, out=self._Xp2)
+        torch.neg(self._Xp2, out=self._Xp2)  # Avoid torch.rsub by using explicit negation
 
         # numerators - reuse pre-allocated tensors
         torch.mul((self._lambda3 * (self._lambda3 - See) + Tee), self._Xp3, out=self._Ue3sq)
@@ -396,39 +463,19 @@ class Oscillator:
         self._sinsqD32_2 = self._sinsq_vec[:, 2]
 
         # ------------------------------------------------------------------- #
-        # Calculate the three necessary probabilities using vectorized operations #
+        # Calculate the three necessary probabilities using JIT-compiled optimized function #
         # ------------------------------------------------------------------- #
         
-        # Calculate pme_CPC using vectorized dot product instead of multiple operations
-        Ut_terms_0 = self._Ut3sq - self._Um2sq * self._Ue1sq - self._Um1sq * self._Ue2sq
-        Ut_terms_1 = self._Ut2sq - self._Um3sq * self._Ue1sq - self._Um1sq * self._Ue3sq
-        Ut_terms_2 = self._Ut1sq - self._Um3sq * self._Ue2sq - self._Um2sq * self._Ue3sq
+        # Use JIT-compiled function for maximum performance
+        self._pme_CPC, self._pmm, self._pee = _calc_probabilities_jit(
+            self._Ut3sq, self._Um2sq, self._Ue1sq, self._Um1sq, self._Ue2sq,
+            self._Ut2sq, self._Um3sq, self._Ue3sq,
+            self._Ut1sq,
+            self._sinsqD21_2, self._sinsqD31_2, self._sinsqD32_2
+        )
         
-        # Single vectorized calculation instead of three separate multiplications
-        self._pme_CPC = (Ut_terms_0 * self._sinsqD21_2 + 
-                        Ut_terms_1 * self._sinsqD31_2 + 
-                        Ut_terms_2 * self._sinsqD32_2)
-        
-        torch.mul(-Jmatter, self._triple_sin, out=self._pme_CPV)
-
-        # Calculate pmm and pee using vectorized operations
-        Um_terms_0 = self._Um2sq * self._Um1sq
-        Um_terms_1 = self._Um3sq * self._Um1sq  
-        Um_terms_2 = self._Um3sq * self._Um2sq
-        
-        pmm_sum = (Um_terms_0 * self._sinsqD21_2 + 
-                  Um_terms_1 * self._sinsqD31_2 + 
-                  Um_terms_2 * self._sinsqD32_2)
-        torch.sub(1, 2 * pmm_sum, out=self._pmm)
-        
-        Ue_terms_0 = self._Ue2sq * self._Ue1sq
-        Ue_terms_1 = self._Ue3sq * self._Ue1sq
-        Ue_terms_2 = self._Ue3sq * self._Ue2sq
-        
-        pee_sum = (Ue_terms_0 * self._sinsqD21_2 + 
-                  Ue_terms_1 * self._sinsqD31_2 + 
-                  Ue_terms_2 * self._sinsqD32_2)
-        torch.sub(1, 2 * pee_sum, out=self._pee)
+        torch.mul(Jmatter, self._triple_sin, out=self._pme_CPV)
+        torch.neg(self._pme_CPV, out=self._pme_CPV)  # Avoid torch.rsub by explicit negation
 
         # ---------------------------- #
         # Assign all the probabilities #
