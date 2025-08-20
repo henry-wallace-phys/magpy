@@ -165,18 +165,14 @@ class Oscillator:
         self._Xp2 = torch.zeros(n_events, dtype=torch.float64, device=device)
         self._Xp3 = torch.zeros(n_events, dtype=torch.float64, device=device)
 
-        # Pre-allocate vectorized stack tensors - these will be filled during calc_probability
-        self._D_stack = torch.zeros((n_events, 3), dtype=torch.float64, device=device)
-        self._sin_stack = torch.zeros((n_events, 3), dtype=torch.float64, device=device)
-        self._sinsq_stack = torch.zeros((n_events, 3), dtype=torch.float64, device=device)
+        # Pre-allocate vectorized calculation tensors for batch operations
+        self._U_matrix = torch.zeros((n_events, 3, 3), dtype=torch.float64, device=device)  # Full U matrix
+        self._D_vec = torch.zeros((n_events, 3), dtype=torch.float64, device=device)  # [D21, D31, D32]
+        self._sin_vec = torch.zeros((n_events, 3), dtype=torch.float64, device=device)  # sin values
+        self._sinsq_vec = torch.zeros((n_events, 3), dtype=torch.float64, device=device)  # sin^2 values
         
-        # Pre-allocate probability calculation stacks
-        self._Ut_terms = torch.zeros((n_events, 3), dtype=torch.float64, device=device)
-        self._Um_terms = torch.zeros((n_events, 3), dtype=torch.float64, device=device)
-        self._Ue_terms = torch.zeros((n_events, 3), dtype=torch.float64, device=device)
-
-        # Pre-allocate vectorized U-matrix calculation tensors
-        self._U_stack = torch.zeros((n_events, 9), dtype=torch.float64, device=device)  # For all 9 U elements
+        # Pre-allocate probability matrices for vectorized calculations
+        self._prob_matrix = torch.zeros((n_events, 3, 3), dtype=torch.float64, device=device)  # Full probability matrix
 
         # Now to set up masks for oscillations in/out - create masks but only for torch.where usage
         self._mask_em = (self._osc_in == NuType.E.value) & (self._osc_out == NuType.Mu.value)
@@ -372,65 +368,67 @@ class Oscillator:
         torch.mul(self._Dlambda21, self._Lover4E, out=self._D21)
         torch.mul(self._Dlambda32, self._Lover4E, out=self._D32)
 
-        # Use pre-allocated stacks for vectorized computation
+        # Use pre-allocated vectorized tensors for batch computation
         torch.add(self._D32, self._D21, out=self._tmp)  # D31 = D32 + D21
         
-        # Fill pre-allocated D stack (no new memory allocation)
-        self._D_stack[:, 0] = self._D21
-        self._D_stack[:, 1] = self._tmp  # D31
-        self._D_stack[:, 2] = self._D32
+        # Fill pre-allocated D vector (no new memory allocation)
+        self._D_vec[:, 0] = self._D21
+        self._D_vec[:, 1] = self._tmp  # D31
+        self._D_vec[:, 2] = self._D32
         
-        # Vectorized sine computation using pre-allocated stack
-        torch.sin(self._D_stack, out=self._sin_stack)
+        # Vectorized sine computation using pre-allocated vector
+        torch.sin(self._D_vec, out=self._sin_vec)
         
-        # Extract sine results (views into the pre-allocated stack - no copy)
-        self._sinD21 = self._sin_stack[:, 0]
-        self._sinD31 = self._sin_stack[:, 1] 
-        self._sinD32 = self._sin_stack[:, 2]
+        # Extract sine results (views into the pre-allocated vector - no copy)
+        self._sinD21 = self._sin_vec[:, 0]
+        self._sinD31 = self._sin_vec[:, 1] 
+        self._sinD32 = self._sin_vec[:, 2]
 
         torch.mul(self._sinD21 * self._sinD31, self._sinD32, out=self._triple_sin)
 
-        # Vectorized square operations using pre-allocated stack
-        torch.square(self._sin_stack, out=self._sinsq_stack)
-        self._sinsq_stack.mul_(2)  # Multiply all by 2 in one operation
+        # Vectorized square operations using pre-allocated vector
+        torch.square(self._sin_vec, out=self._sinsq_vec)
+        self._sinsq_vec.mul_(2)  # Multiply all by 2 in one operation
         
-        # Extract squared results (views into the pre-allocated stack)
-        self._sinsqD21_2 = self._sinsq_stack[:, 0]
-        self._sinsqD31_2 = self._sinsq_stack[:, 1]
-        self._sinsqD32_2 = self._sinsq_stack[:, 2]
+        # Extract squared results (views into the pre-allocated vector)
+        self._sinsqD21_2 = self._sinsq_vec[:, 0]
+        self._sinsqD31_2 = self._sinsq_vec[:, 1]
+        self._sinsqD32_2 = self._sinsq_vec[:, 2]
 
         # ------------------------------------------------------------------- #
-        # Calculate the three necessary probabilities, separating CPC and CPV #
+        # Calculate the three necessary probabilities using vectorized operations #
         # ------------------------------------------------------------------- #
         
-        # Revert to working individual calculations for correctness
-        # Fill pre-allocated Ut_terms stack
-        self._Ut_terms[:, 0] = self._Ut3sq - self._Um2sq * self._Ue1sq - self._Um1sq * self._Ue2sq
-        self._Ut_terms[:, 1] = self._Ut2sq - self._Um3sq * self._Ue1sq - self._Um1sq * self._Ue3sq
-        self._Ut_terms[:, 2] = self._Ut1sq - self._Um3sq * self._Ue2sq - self._Um2sq * self._Ue3sq
+        # Calculate pme_CPC using vectorized dot product instead of multiple operations
+        Ut_terms_0 = self._Ut3sq - self._Um2sq * self._Ue1sq - self._Um1sq * self._Ue2sq
+        Ut_terms_1 = self._Ut2sq - self._Um3sq * self._Ue1sq - self._Um1sq * self._Ue3sq
+        Ut_terms_2 = self._Ut1sq - self._Um3sq * self._Ue2sq - self._Um2sq * self._Ue3sq
         
-        # Single vectorized multiplication and sum using pre-allocated stacks
-        torch.sum(self._Ut_terms * self._sinsq_stack, dim=-1, out=self._pme_CPC)
+        # Single vectorized calculation instead of three separate multiplications
+        self._pme_CPC = (Ut_terms_0 * self._sinsqD21_2 + 
+                        Ut_terms_1 * self._sinsqD31_2 + 
+                        Ut_terms_2 * self._sinsqD32_2)
         
         torch.mul(-Jmatter, self._triple_sin, out=self._pme_CPV)
 
-        # Fill pre-allocated Um_terms stack
-        self._Um_terms[:, 0] = self._Um2sq * self._Um1sq
-        self._Um_terms[:, 1] = self._Um3sq * self._Um1sq
-        self._Um_terms[:, 2] = self._Um3sq * self._Um2sq
+        # Calculate pmm and pee using vectorized operations
+        Um_terms_0 = self._Um2sq * self._Um1sq
+        Um_terms_1 = self._Um3sq * self._Um1sq  
+        Um_terms_2 = self._Um3sq * self._Um2sq
         
-        torch.sum(self._Um_terms * self._sinsq_stack, dim=-1, out=self._tmp)
-        torch.mul(2, self._tmp, out=self._tmp)  # tmp = 2 * sum
-        torch.sub(1, self._tmp, out=self._pmm)  # pmm = 1 - tmp
-
-        # Fill pre-allocated Ue_terms stack
-        self._Ue_terms[:, 0] = self._Ue2sq * self._Ue1sq
-        self._Ue_terms[:, 1] = self._Ue3sq * self._Ue1sq
-        self._Ue_terms[:, 2] = self._Ue3sq * self._Ue2sq
+        pmm_sum = (Um_terms_0 * self._sinsqD21_2 + 
+                  Um_terms_1 * self._sinsqD31_2 + 
+                  Um_terms_2 * self._sinsqD32_2)
+        torch.sub(1, 2 * pmm_sum, out=self._pmm)
         
-        torch.sum(self._Ue_terms * self._sinsq_stack, dim=-1, out=self._tmp)
-        torch.mul(2, self._tmp, out=self._tmp)  # tmp = 2 * sum
-        torch.sub(1, self._tmp, out=self._pee)  # pee = 1 - tmp
+        Ue_terms_0 = self._Ue2sq * self._Ue1sq
+        Ue_terms_1 = self._Ue3sq * self._Ue1sq
+        Ue_terms_2 = self._Ue3sq * self._Ue2sq
+        
+        pee_sum = (Ue_terms_0 * self._sinsqD21_2 + 
+                  Ue_terms_1 * self._sinsqD31_2 + 
+                  Ue_terms_2 * self._sinsqD32_2)
+        torch.sub(1, 2 * pee_sum, out=self._pee)
 
         # ---------------------------- #
         # Assign all the probabilities #
