@@ -3,12 +3,12 @@ from typing import Optional
 import pandas as pd
 from tqdm import tqdm
 import uproot
+import jax.numpy as jnp
 
 from magpy.file_io.root_file import RootFile
 from magpy.objects.mc_event import MCEvent, MCEventMonolith, MCEventIndices
 from magpy.Exceptions import MagpyInvalidObjectError, MagpyModeNotFoundException
 from magpy.utils.modes import SplineModes
-from magpy.utils.device_manager import DeviceManager
 import numpy as np
 
 
@@ -47,10 +47,10 @@ class MCFile(RootFile):
         else:
             raise MagpyInvalidObjectError("No branches set for MCEvent, cannot fill monolith.")
             
-        # Now we fill the monolith
+        # Now we fill the monolith with JAX arrays
         monolith_list = []
 
-        print("Filling MC Event monolith...")
+        print("Filling JAX MC Event monolith...")
         for i, event in tqdm(self._mc_event_monolith.iterrows(), total=len(self._mc_event_monolith)):
             
             # Get the info

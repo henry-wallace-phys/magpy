@@ -12,10 +12,8 @@ from magpy.benchmarking.benchmark_reweight import (
 
 import click
 import numpy as np
-import torch
 
 from pathlib import Path
-
 
 @click.command()
 @click.option(
@@ -54,6 +52,7 @@ def main(
     do_reweight: bool = True,
     out_folder: str = "benchmarks/results",
 ):    
+    
     if not Path(out_folder).exists():
         Path(out_folder).mkdir(parents=True, exist_ok=True)
     if do_osc:

@@ -8,9 +8,9 @@ from cProfile import Profile
 from pstats import Stats
 
 from tqdm import tqdm
-from magpy.oscillator.oscillator import Oscillator, NuType
+from magpy.oscillator.oscillator import Oscillator
 from magpy.utils.device_manager import DeviceManager
-
+from magpy.oscillator.nu_types import NuType   
 
 def benchmark_osc(n_iter: int = 50, n_scales: int = 100000, points: int = 100):
 
@@ -26,12 +26,12 @@ def benchmark_osc(n_iter: int = 50, n_scales: int = 100000, points: int = 100):
     times = torch.zeros((n_iter, len(scales)), dtype=torch.float64, device=device)
 
     osc_in_tmp = torch.tensor(
-        np.random.choice([NuType.E.value, NuType.Mu.value, NuType.Tau.value], size=10),
+        np.random.choice([12, 14, 16], size=10),
         dtype=torch.int64,
         device=device,
     )
     osc_out_tmp = torch.tensor(
-        np.random.choice([NuType.E.value, NuType.Mu.value, NuType.Tau.value], size=10),
+        np.random.choice([12, 14, 16], size=10),
         dtype=torch.int64,
         device=device,
     )
@@ -43,61 +43,56 @@ def benchmark_osc(n_iter: int = 50, n_scales: int = 100000, points: int = 100):
 
 
     print("Starting osc benchmark...")
-    with Profile() as pr:
-        pr.disable()
-        for j, event_scale in tqdm(
-            enumerate(scales), desc="Event scale", total=len(scales)
-        ):
-            # Silly but helps
-            if j == 0:
-                print("Burning a few cycles in...")
-                for i in range(100):
-                    oscillator_tmp = Oscillator(1300, 0.5, 3, 0)
-                    oscillator_tmp.set_energy_osc(energies_tmp, osc_in_tmp, osc_out_tmp)
-                    oscillator_tmp.calc_probability(osc_pars)
+    for j, event_scale in tqdm(
+        enumerate(scales), desc="Event scale", total=len(scales)
+    ):
+        # Silly but helps
+        if j == 0:
+            print("Burning a few cycles in...")
+            for i in range(100):
+                oscillator_tmp = Oscillator(1300, 0.5, 3, 0)
+                oscillator_tmp.set_energy_osc(energies_tmp, osc_in_tmp, osc_out_tmp)
+                oscillator_tmp.calc_probability(osc_pars)
 
-            osc_in = torch.tensor(
-                np.random.choice(
-                    [NuType.E.value, NuType.Mu.value, NuType.Tau.value], size=event_scale
-                ),
-                dtype=torch.int64,
-                device=device,
-            )
-            osc_out = torch.tensor(
-                np.random.choice(
-                    [NuType.E.value, NuType.Mu.value, NuType.Tau.value], size=event_scale
-                ),
-                dtype=torch.int64,
-                device=device,
-            )
-            energies = torch.tensor(
-                np.linspace(0.1, 10, event_scale), dtype=torch.float64, device=device
-            )  # Example energy range
+        osc_in = torch.tensor(
+            np.random.choice(
+                [NuType.ELECTRON.value, NuType.MUON.value, NuType.TAU.value], size=event_scale
+            ),
+            dtype=torch.int64,
+            device=device,
+        )
+        osc_out = torch.tensor(
+            np.random.choice(
+                [NuType.ELECTRON.value, NuType.MUON.value, NuType.TAU.value], size=event_scale
+            ),
+            dtype=torch.int64,
+            device=device,
+        )
+        energies = torch.tensor(
+            np.linspace(0.1, 10, event_scale), dtype=torch.float64, device=device
+        )  # Example energy range
 
-            oscillator = Oscillator(1300, 0.5, 3, 0)
-            oscillator.set_energy_osc(energies, osc_in, osc_out)
+        oscillator = Oscillator(1300, 0.5, 3, 0)
+        oscillator.set_energy_osc(energies, osc_in, osc_out)
 
-            
-            for i in range(n_iter):
-                osc_mod = osc_pars.clone() * (
-                    1.0001 + (np.random.uniform(0, 1) / (n_iter * 100))
-                )
-                start_time = time.time()
-                pr.enable()
-                _ = oscillator.calc_probability(osc_mod)
-                pr.disable()
-                end_time = time.time()
-                times[i, j] = end_time - start_time
         
-        Stats(pr).strip_dirs().sort_stats("cumulative").print_stats()
+        for i in range(n_iter):
+            osc_mod = osc_pars.clone() * (
+                1.0001 + (np.random.uniform(0, 1) / (n_iter * 100))
+            )
+            start_time = time.time()
+            _ = oscillator.calc_probability(osc_mod)
+            end_time = time.time()
+            times[i, j] = end_time - start_time
+    
 
     print("Benchmark complete.")
     return times.cpu().numpy(), scales
 
 
 def plot_scaling(times: np.ndarray, scales: np.ndarray, plot_file="osc_scaling.png"):
-    mean_times = times.mean(axis=0)
-    std_times = times.std(axis=0)
+    mean_times = times[2:].mean(axis=0)
+    std_times = times[2:].std(axis=0)
 
     plt.figure()
     plt.errorbar(scales, mean_times * 1_000, yerr=std_times * 1_000, fmt="o-")
@@ -110,7 +105,7 @@ def plot_scaling(times: np.ndarray, scales: np.ndarray, plot_file="osc_scaling.p
 
     # Now we do times/scale
     plt.figure()
-    plt.plot(scales, mean_times / scales * 1_000_000, label="Mean Time per Scale [μs]")
+    plt.plot(scales, mean_times / scales * 1_000_000, label="Mean Time per event [μs]")
     plt.xlabel("Time/Event [μs]")
     plt.ylabel("Number of Events")
     plt.title("Mean Time per Event")
@@ -150,7 +145,7 @@ def plot_times_per_iter(times: np.ndarray, scales: np.ndarray, plot_file="osc_ti
     Plot the average time per iteration for each scale.
     """
     for s in range(len(scales)):
-        plt.plot(times[:,s] * 1_000, label=f"Scale {scales[s]}")
+        plt.plot(times[10:,s] * 1_000, label=f"N Events {scales[s]}")
 
     plt.xlabel("Iteration")
     plt.ylabel("Time (ms)")

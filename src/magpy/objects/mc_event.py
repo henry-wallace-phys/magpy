@@ -1,10 +1,8 @@
 from dataclasses import dataclass
 from enum import Enum
+from typing import List
 
-import torch
-
-from magpy.utils.device_manager import DeviceManager
-
+import jax.numpy as jnp
 
 class MCEventIndices(Enum):
     TRUE_NEUTRINO_ENERGY = 0
@@ -23,7 +21,7 @@ class MCEventIndices(Enum):
 @dataclass
 class MCEvent:
     '''
-    Represents a single event in the mc
+    Represents a single event in the mc using JAX arrays
     '''
     true_neutrino_energy: float  # True neutrino energy
     true_q2: float  # True Q2
@@ -36,31 +34,28 @@ class MCEvent:
     weight: float = 0 # Event weight
     
     # Now we want to make it tensor-y
-    def to_tensor(self):
-        return torch.tensor(
-            [
-                self.true_neutrino_energy,
-                self.true_q2,
-                self.reco_neutrino_energy,
-                self.interaction_mode,
-                self.start_nu,
-                self.end_nu,
-                self.target,
-                0.0,  # Placeholder for weight, can be set later
-            ],
-            dtype=torch.float64,
-            device = DeviceManager().get_device()
-
-        )
+    def to_array(self):
+        return jnp.array([
+            self.true_neutrino_energy,
+            self.true_q2,
+            self.reco_neutrino_energy,
+            self.interaction_mode,
+            self.start_nu,
+            self.end_nu,
+            self.target,
+            self.weight,
+        ], dtype=jnp.float64)
 
 
 class MCEventMonolith:
-    def __init__(self, mc_event_list: list[MCEvent]):
-        self._mc_event_monolith = torch.stack(
-            [event.to_tensor() for event in mc_event_list]
+    '''
+    Monolith of MC Events
+    '''
+    def __init__(self, mc_event_list: List[MCEvent]):
+        # Stack all events into a JAX array
+        self._mc_event_monolith = jnp.stack(
+            [event.to_array() for event in mc_event_list]
         )
-        
-        self._mc_event_monolith.to(torch.float64).to(DeviceManager().get_device())
         
         self._n_events = len(mc_event_list)
 
@@ -74,3 +69,8 @@ class MCEventMonolith:
     
     def __len__(self):
         return self._n_events
+
+
+# For backward compatibility
+# MCEvent = JAXMCEvent
+# MCEventMonolith = JAXMCEventMonolith

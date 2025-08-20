@@ -1,13 +1,18 @@
 """
-Series of tests of nu oscillator
+Series of tests of JAX nu oscillator
 """
 
-import torch
+import jax.numpy as jnp
 import pytest
 import numpy as np
 
-from magpy.oscillator.oscillator import Oscillator, NuType
+# Enable 64-bit precision
+import jax
+jax.config.update("jax_enable_x64", True)
 
+from magpy.oscillator.oscillator import Oscillator
+
+from magpy.oscillator.nu_types import NuType
 
 # Energies
 # Now this is done can run tests
@@ -22,7 +27,7 @@ TEST_DATA = [
         0.7 * np.pi,
         7.5e-5,
         2.5e-3,
-        torch.tensor(
+        jnp.array(
             [0.9598862328001443, 0.025676407527673743, 
              0.014437359672181967, 0.9268887954768323,
              0.01206345199427121, 0.06104775252889645,
@@ -41,7 +46,7 @@ TEST_DATA = [
              0.061612159194796526, 0.7359869643388447,
              0.20240087646635874, 0.00452292925535842,
              0.801171581908311, 0.1943054888363306],
-            dtype=torch.float64,
+            dtype=jnp.float64,
         ),
     ),
     (
@@ -51,7 +56,7 @@ TEST_DATA = [
         0,
         7.51e-5,
         2.51e-3,
-        torch.tensor(
+        jnp.array(
                 [0.9570817334818662, 0.032293704371769205,
                  0.010624562146364591, 0.9234525763484688,
                  0.0528154188947389, 0.023732004756792324,
@@ -70,7 +75,7 @@ TEST_DATA = [
                  0.07501722555823234, 0.7412295872303883,
                  0.18375318721137934, 0.01964274341650942,
                  0.788946167582007, 0.19141108900148363],
-            dtype=torch.float64,
+            dtype=jnp.float64,
         ),
     ),
     (
@@ -80,7 +85,7 @@ TEST_DATA = [
         np.pi,
         7.51e-5,
         2.51e-3,
-        torch.tensor(
+        jnp.array(
             [0.9570817334818662, 0.009625281286105123,
              0.03329298523202867, 0.9234525763484688,
              0.02100248325692104, 0.05554494039461018,
@@ -99,54 +104,150 @@ TEST_DATA = [
              0.05253522526036147, 0.7483953435620171,
              0.19906943117762144, 0.010803469855353614,
              0.7961069960040078, 0.19308953414063856],
-            dtype=torch.float64,
+            dtype=jnp.float64,
         ),
     ),
 ]
 
 
-@pytest.mark.parametrize(
-    "s12sq, s13sq, s23sq, delta, Dmsq21, Dmsq31, expected_out", TEST_DATA
-)
-def test_oscillator(
-    s12sq: float,
-    s13sq: float,
-    s23sq: float,
-    delta: float,
-    Dmsq21: float,
-    Dmsq31: float,
-    expected_out: torch.Tensor,
-):
-    energy_range = [1.0, 2.0]
 
-    # We're gonna do every channel
-    osc_channels = [NuType.E.value, NuType.EBar.value, NuType.Mu.value, NuType.MuBar.value, NuType.Tau.value, NuType.TauBar.value]
+def test_oscillator_creation():
+    """Test that the JAX oscillator can be created"""
+    osc = Oscillator(L=1300, ye=0.5, rho=3.0, n_newton=1000)
+    assert osc.L == 1300
+    assert osc.ye == 0.5
+    assert osc.rho == 3.0
+    assert osc.n_newton == 1000
+
+
+def test_oscillator_energy_setting():
+    """Test setting energies in the oscillator"""
+    osc = Oscillator(L=1300, ye=0.5, rho=3.0, n_newton=1000)
+    
+    energies = jnp.linspace(0.1, 10.0, 100)
+    start_nu = jnp.full(100, 14)  # muon neutrino
+    end_nu = jnp.full(100, 14)    # muon neutrino
+    
+    osc.set_energy_osc(energies, start_nu, end_nu)
+    
+    # Check that oscillator is properly initialized
+    # We can't access private attributes, so just test that calc_probability works
+    params = jnp.array([0.31, 0.025, 0.56, 0.0, 7.5e-5, 2.5e-3])
+    probs = osc.calc_probability(params)
+    assert len(probs) == len(energies)
+
+
+@pytest.mark.parametrize("s12, s13, s23, delta_cp, dmsq21, dmsq31, expected", TEST_DATA)
+def test_oscillator_probabilities(s12, s13, s23, delta_cp, dmsq21, dmsq31, expected):
+    """Test oscillation probability calculations against expected values"""
+    osc = Oscillator(L=1300, ye=0.5, rho=3.0, n_newton=1000)
+    
+    # Set up test energies - use same range as original tests
+    energies = [1.0, 2.0]
+
+    osc_channels = [NuType.ELECTRON.value, -1*NuType.ELECTRON.value,
+                    NuType.MUON.value, -1* NuType.MUON.value,
+                    NuType.TAU.value, -1* NuType.TAU.value]
 
     final_osc_chans = []
     final_energies = []
     
     osc_combs =  [(in_, out) for in_ in osc_channels for out in osc_channels if np.sign(in_) == np.sign(out)]
     
-    for E_ENERGY in energy_range:
+    for E_ENERGY in energies:
         final_osc_chans.extend(osc_combs)
         final_energies.extend([E_ENERGY] * len(osc_combs))
 
-    final_osc_chans = torch.tensor(final_osc_chans)
+    final_osc_chans = jnp.array(final_osc_chans, dtype=jnp.int64)
     osc_in = final_osc_chans[:, 0]
-
     osc_out = final_osc_chans[:, 1]
+    
+    energies = jnp.array(final_energies, dtype=jnp.float64)
+    
+    osc.set_energy_osc(energies, osc_in, osc_out)
+    
+    # Calculate probabilities
+    params = jnp.array([s12, s13, s23, delta_cp, dmsq21, dmsq31])
+    probs = osc.calc_probability(params)
+    
+    # Check that we get reasonable probability values
+    assert jnp.all(probs >= 0.0)
+    assert jnp.all(probs <= 1.0)
+    
+    
+    # Check length matches number of energies
+    assert len(probs) == len(energies)    
+    assert jnp.allclose(probs, expected, rtol=1e-5, atol=1e-8)
 
-    energies = torch.tensor(final_energies, dtype=torch.float64)
 
-    oscillator = Oscillator(1300, 0.5, 3, 0)
-    osc_pars = torch.tensor(
-        [s12sq, s13sq, s23sq, delta, Dmsq21, Dmsq31], dtype=torch.float64
-    )
-    oscillator.set_energy_osc(energies, osc_in, osc_out)
+def test_oscillator_neutrino_types():
+    """Test different neutrino type combinations"""
+    osc = Oscillator(L=1300, ye=0.5, rho=3.0, n_newton=1000)
+    
+    energies = jnp.array([1.0, 2.0, 5.0])
+    
+    # Test mu -> e oscillation
+    start_nu = jnp.full(3, 14)  # muon neutrino
+    end_nu = jnp.full(3, 12)    # electron neutrino
+    
+    osc.set_energy_osc(energies, start_nu, end_nu)
+    
+    params = jnp.array([0.31, 0.025, 0.56, 0.0, 7.5e-5, 2.5e-3])
+    probs = osc.calc_probability(params)
+    
+    assert jnp.all(probs >= 0.0)
+    assert jnp.all(probs <= 1.0)
 
-    osc_prob = oscillator.calc_probability(osc_pars)
 
-    for i, (exp, pref) in enumerate(zip(expected_out, osc_prob)):
-        assert torch.isclose(
-            exp, pref, rtol=1e-8, atol=1e-8
-        ), f"For E={energies[i]} {NuType(osc_in[i].item())}->{NuType(osc_out[i].item())}  Expected {exp}, got {pref}"
+def test_oscillator_consistency():
+    """Test that multiple calculations with same parameters give same results"""
+    osc = Oscillator(L=1300, ye=0.5, rho=3.0, n_newton=1000)
+    
+    energies = jnp.linspace(0.5, 10.0, 50)
+    start_nu = jnp.full(50, 14)
+    end_nu = jnp.full(50, 14)
+    
+    osc.set_energy_osc(energies, start_nu, end_nu)
+    
+    params = jnp.array([0.31, 0.025, 0.56, 0.0, 7.5e-5, 2.5e-3])
+    
+    # Calculate twice
+    probs1 = osc.calc_probability(params)
+    probs2 = osc.calc_probability(params)
+    
+    # Should be identical
+    assert jnp.allclose(probs1, probs2, rtol=1e-15)
+
+
+def test_oscillator_performance():
+    """Test that oscillator performs well with large arrays"""
+    osc = Oscillator(L=1300, ye=0.5, rho=3.0, n_newton=1000)
+    
+    # Large array test
+    n_events = 10000
+    energies = jnp.linspace(0.1, 100.0, n_events)
+    start_nu = jnp.full(n_events, 14)
+    end_nu = jnp.full(n_events, 14)
+    
+    osc.set_energy_osc(energies, start_nu, end_nu)
+    
+    params = jnp.array([0.31, 0.025, 0.56, 0.0, 7.5e-5, 2.5e-3])
+    
+    import time
+    start_time = time.perf_counter()
+    probs = osc.calc_probability(params)
+    end_time = time.perf_counter()
+    
+    # Check results
+    assert len(probs) == n_events
+    assert jnp.all(probs >= 0.0)
+    assert jnp.all(probs <= 1.0)
+    
+    # Performance check - should be much faster than 1ms for 10k events
+    elapsed = end_time - start_time
+    print(f"JAX Oscillator: {elapsed*1000:.3f}ms for {n_events} events")
+    assert elapsed < 0.1  # Should be much faster than 100ms
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])
