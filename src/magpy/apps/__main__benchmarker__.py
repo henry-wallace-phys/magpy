@@ -2,10 +2,12 @@ from magpy.benchmarking.benchmark_osc import (
     benchmark_osc,
     plot_scaling,
     plot_average_time_per_event,
+    plot_times_per_iter as plot_osc_average_time_per_iter,
 )
 from magpy.benchmarking.benchmark_reweight import (
     benchmark_reweight,
     plot_hist,
+    plot_times_per_iter as plot_reweight_times_per_iter,
 )
 
 import click
@@ -21,7 +23,7 @@ from pathlib import Path
 )
 @click.option("--points", default=10, type=int, help="Number of points to sample")
 @click.option(
-    "--n_osc_scales",
+    "--max_n_events",
     default=100000,
     type=int,
     help="Number of oscillation scales to sample",
@@ -47,7 +49,7 @@ from pathlib import Path
 def main(
     n_iter: int = 500,
     points: int = 10,
-    n_osc_scales: int = 100000,
+    max_n_events: int = 100000,
     do_osc: bool = True,
     do_reweight: bool = True,
     out_folder: str = "benchmarks/results",
@@ -55,16 +57,20 @@ def main(
     if not Path(out_folder).exists():
         Path(out_folder).mkdir(parents=True, exist_ok=True)
     if do_osc:
-        times, scales = benchmark_osc(n_iter=n_iter, points=points, n_scales=n_osc_scales)
+        times, scales = benchmark_osc(n_iter=n_iter, points=points, n_scales=max_n_events)
         plot_scaling(times, scales, plot_file=f"{out_folder}/osc_scaling.png")
         plot_average_time_per_event(
             times, scales, plot_file=f"{out_folder}/osc_average_time_event.png"
+        )
+        plot_osc_average_time_per_iter(
+            times, scales, plot_file=f"{out_folder}/osc_times_per_iter.png"
         )
 
     if do_reweight:
         reweight_times = benchmark_reweight(n_iter=n_iter)
         plot_hist(reweight_times, plot_file=f"{out_folder}/reweight_histogram.png")
- 
+        plot_reweight_times_per_iter(reweight_times, plot_file=f"{out_folder}/reweight_times_per_iter.png")
+
         reweight_times = np.array(reweight_times)
 
         burn_cut = np.round(n_iter * 0.1).astype(int)

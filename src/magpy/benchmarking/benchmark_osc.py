@@ -123,6 +123,43 @@ def plot_scaling(times: np.ndarray, scales: np.ndarray, plot_file="osc_scaling.p
 
     plt.savefig(f"{plot_path}_per_event{ext}")
     plt.close()
+    
+    plt.figure()
+    plt.hist(
+        mean_times[
+            np.abs(mean_times - np.mean(mean_times)) < 3 * np.std(mean_times)
+        ]
+        * 1_000_000,
+        bins=50,
+        alpha=0.7,
+    )
+    plt.xlabel("Oscillation Time (μs)")
+    plt.title("Average time per oscillation per event")
+    plt.grid()
+    plt.savefig(plot_file)
+    plt.close()
+    
+    print(
+        f"Average time: ([bold]{np.mean(mean_times)*1_000_000}±{np.std(mean_times)*1_000_000} μs[/bold])"
+    )
+
+
+
+def plot_times_per_iter(times: np.ndarray, scales: np.ndarray, plot_file="osc_times_per_iter.png"):
+    """
+    Plot the average time per iteration for each scale.
+    """
+    for s in range(len(scales)):
+        plt.plot(times[:,s] * 1_000, label=f"Scale {scales[s]}")
+
+    plt.xlabel("Iteration")
+    plt.ylabel("Time (ms)")
+    plt.title("Oscillator Benchmark Scaling")
+    plt.grid()
+    plt.legend()
+    plt.savefig(plot_file)
+    plt.close()
+
 
 
 def plot_average_time_per_event(

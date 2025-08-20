@@ -102,3 +102,18 @@ def plot_hist(times, plot_file="reweight_histogram.png"):
     plt.grid()
     plt.savefig(plot_file)
     plt.close()
+
+def plot_times_per_iter(times, plot_file="reweight_times_per_iter.png"):
+    """
+    Plot the times per iteration for the reweighting process.
+    """
+
+    plt.figure()
+    plt.plot(times * 1000, label="Reweight Time per Iteration")
+    
+    plt.xlabel("Iteration")
+    plt.ylabel("Reweight Time (milliseconds)")
+    plt.grid()
+    plt.legend()
+    plt.savefig(plot_file)
+    plt.close()

@@ -487,7 +487,6 @@ class Oscillator:
         
         # Batch the main probability assignments using vectorized operations
         # Create combined mask for all non-tau transitions
-        combined_mask = self._mask_em | self._mask_me | self._mask_mm | self._mask_ee
         
         # Use torch.where more efficiently by combining operations
         torch.where(self._mask_em, self._pem, weights, out=weights)
