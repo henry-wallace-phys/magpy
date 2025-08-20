@@ -2,6 +2,8 @@
 
 import time
 from pathlib import Path
+from cProfile import Profile
+from pstats import Stats
 
 import torch
 from tqdm import tqdm
@@ -66,19 +68,24 @@ def benchmark_reweight(n_iter: int = 50):
 
     times = np.zeros(n_iter)
 
-    for i in tqdm(range(n_iter), total=n_iter, desc="Reweighting Benchmark"):
-        osc_mod = osc_reweight.clone() * (
-                1.0001 + (np.random.uniform(0, 1) / (n_iter * 100))
-            )
-    
-        syst_mod = syst_vals.clone() * (
-                1.0001 + (np.random.uniform(0, 1) / (n_iter * 100))
-            )
-
+    with Profile() as pr:
+        pr.disable()
+        for i in tqdm(range(n_iter), total=n_iter, desc="Reweighting Benchmark"):
+            osc_mod = osc_reweight.clone() * (
+                    1.0001 + (np.random.uniform(0, 1) / (n_iter * 100))
+                )
         
-        start = time.time()
-        handler.reweight(osc_mod, syst_mod)
-        times[i] = time.time() - start
+            syst_mod = syst_vals.clone() * (
+                    1.0001 + (np.random.uniform(0, 1) / (n_iter * 100))
+                )
+
+            
+            start = time.time()
+            pr.enable()
+            handler.reweight(osc_mod, syst_mod)
+            pr.disable()
+            times[i] = time.time() - start
+        Stats(pr).strip_dirs().sort_stats("cumulative").print_stats()
 
     print(f"Average time per iteration: {np.mean(times):.6f} seconds")
     

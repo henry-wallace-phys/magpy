@@ -16,7 +16,7 @@ from pathlib import Path
 
 @click.command()
 @click.option(
-    "--n_iter", default=50, type=int, help="Number of iterations for the benchmark"
+    "--n_iter", default=500, type=int, help="Number of iterations for the benchmark"
 )
 @click.option("--points", default=10, type=int, help="Number of points to sample")
 @click.option(
@@ -66,7 +66,9 @@ def main(
 
         reweight_times = np.array(reweight_times)
 
-        reweight_times = reweight_times[100:]
+        burn_cut = np.round(n_iter * 0.1).astype(int)
+
+        reweight_times = reweight_times[burn_cut:]
         mean_time = np.mean(reweight_times)
 
         plot_hist(reweight_times[abs(reweight_times-mean_time) < np.std(reweight_times)], plot_file=f"{out_folder}/reweight_histogram_main.png")

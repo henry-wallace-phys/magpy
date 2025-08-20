@@ -141,8 +141,6 @@ if __name__=="__main__":
     
     handler.profile(osc_reweight, syst_vals, n_iter=n_iter)
     
-    
-
     for i in (pbar:= tqdm(range(n_iter), total=n_iter, desc="Reweighting iterations")):
         # Randomize osc
         osc_mod = osc_reweight.clone() * (
