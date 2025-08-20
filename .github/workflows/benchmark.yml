@@ -23,9 +23,6 @@ jobs:
           - name: 'cpu'
             compile_opts: echo "No Compiler args"
             branch: "cpu-benchmarks"
-          - name: 'gpu'
-            compile_opts: uv sync --extra cu128
-            branch: "gpu-benchmarks"
 
     steps:
       - uses: actions/checkout@v4

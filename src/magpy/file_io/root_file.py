@@ -6,7 +6,6 @@ from typing import Any
 
 from numpy.typing import NDArray
 import pandas as pd
-import torch
 import uproot
 
 from magpy.Exceptions import MagpyFileNotFoundError, MagpyInvalidObjectError
@@ -78,10 +77,6 @@ class TTreeFile(RootFile):
     def to_pandas(self) -> pd.DataFrame:
         """Get tree as pandas DataFrame"""
         return self.mc_tree.arrays(library="pd")
-
-    def to_torch(self) -> torch.Tensor:
-        """Get tree as torch Tensor"""
-        return torch.tensor(self.to_numpy())
 
 
 class IterableFile(RootFile):

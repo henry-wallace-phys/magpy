@@ -5,7 +5,6 @@ from pathlib import Path
 from cProfile import Profile
 from pstats import Stats
 
-from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
 import jax.numpy as jnp
@@ -16,7 +15,6 @@ from magpy.oscillator.oscillator import Oscillator
 from magpy.file_io.systematic_file import SystematicFile
 from magpy.file_io.mc_file import MCFile
 from magpy.objects.mc_event import MCEventIndices
-from magpy.utils.device_manager import DeviceManager
 
 def benchmark_reweight(n_iter: int = 50):
     """
@@ -66,19 +64,24 @@ def benchmark_reweight(n_iter: int = 50):
 
     times = np.zeros(n_iter)
 
-    for i in range(n_iter):
-        osc_mod = osc_reweight.clone() * (
-                1.0001 + (np.random.uniform(0, 1) / (n_iter * 100))
-            )
-    
-        syst_mod = syst_vals.clone() * (
-                1.0001 + (np.random.uniform(0, 1) / (n_iter * 100))
-            )
-
+    with Profile() as pr:
+        pr.disable()
+        for i in range(n_iter):
+            osc_mod = osc_reweight.clone() * (
+                    1.0001 + (np.random.uniform(0, 1) / (n_iter * 100))
+                )
         
-        start = time.time()
-        handler.reweight(osc_mod, syst_mod)
-        times[i] = time.time() - start
+            syst_mod = syst_vals.clone() * (
+                    1.0001 + (np.random.uniform(0, 1) / (n_iter * 100))
+                )
+
+            
+            pr.enable()
+            start = time.time()
+            handler.reweight(osc_mod, syst_mod)
+            times[i] = time.time() - start
+            pr.disable()
+        Stats(pr).strip_dirs().sort_stats("cumulative").print_stats()
 
     print(f"Average time per iteration: {np.mean(times[2:]):.6f} seconds")
     

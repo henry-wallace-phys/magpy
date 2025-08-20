@@ -43,48 +43,53 @@ def benchmark_osc(n_iter: int = 50, n_scales: int = 100000, points: int = 100):
 
 
     print("Starting osc benchmark...")
-    for j, event_scale in tqdm(
-        enumerate(scales), desc="Event scale", total=len(scales)
-    ):
-        # Silly but helps
-        if j == 0:
-            print("Burning a few cycles in...")
-            for i in range(100):
-                oscillator_tmp = Oscillator(1300, 0.5, 3, 0)
-                oscillator_tmp.set_energy_osc(energies_tmp, osc_in_tmp, osc_out_tmp)
-                oscillator_tmp.calc_probability(osc_pars)
+    with Profile() as pr:
+        pr.disable()
+        for j, event_scale in tqdm(
+            enumerate(scales), desc="Event scale", total=len(scales)
+        ):
+            # Silly but helps
+            if j == 0:
+                print("Burning a few cycles in...")
+                for i in range(100):
+                    oscillator_tmp = Oscillator(1300, 0.5, 3, 0)
+                    oscillator_tmp.set_energy_osc(energies_tmp, osc_in_tmp, osc_out_tmp)
+                    oscillator_tmp.calc_probability(osc_pars)
 
-        osc_in = torch.tensor(
-            np.random.choice(
-                [NuType.ELECTRON.value, NuType.MUON.value, NuType.TAU.value], size=event_scale
-            ),
-            dtype=torch.int64,
-            device=device,
-        )
-        osc_out = torch.tensor(
-            np.random.choice(
-                [NuType.ELECTRON.value, NuType.MUON.value, NuType.TAU.value], size=event_scale
-            ),
-            dtype=torch.int64,
-            device=device,
-        )
-        energies = torch.tensor(
-            np.linspace(0.1, 10, event_scale), dtype=torch.float64, device=device
-        )  # Example energy range
-
-        oscillator = Oscillator(1300, 0.5, 3, 0)
-        oscillator.set_energy_osc(energies, osc_in, osc_out)
-
-        
-        for i in range(n_iter):
-            osc_mod = osc_pars.clone() * (
-                1.0001 + (np.random.uniform(0, 1) / (n_iter * 100))
+            osc_in = torch.tensor(
+                np.random.choice(
+                    [NuType.ELECTRON.value, NuType.MUON.value, NuType.TAU.value], size=event_scale
+                ),
+                dtype=torch.int64,
+                device=device,
             )
-            start_time = time.time()
-            _ = oscillator.calc_probability(osc_mod)
-            end_time = time.time()
-            times[i, j] = end_time - start_time
-    
+            osc_out = torch.tensor(
+                np.random.choice(
+                    [NuType.ELECTRON.value, NuType.MUON.value, NuType.TAU.value], size=event_scale
+                ),
+                dtype=torch.int64,
+                device=device,
+            )
+            energies = torch.tensor(
+                np.linspace(0.1, 10, event_scale), dtype=torch.float64, device=device
+            )  # Example energy range
+
+            oscillator = Oscillator(1300, 0.5, 3, 0)
+            oscillator.set_energy_osc(energies, osc_in, osc_out)
+
+            
+            for i in range(n_iter):
+                osc_mod = osc_pars.clone() * (
+                    1.0001 + (np.random.uniform(0, 1) / (n_iter * 100))
+                )
+                pr.enable()
+                start_time = time.time()
+                _ = oscillator.calc_probability(osc_mod)
+                end_time = time.time()
+                pr.disable()
+                times[i, j] = end_time - start_time
+        
+        Stats(pr).strip_dirs().sort_stats("cumulative").print_stats()
 
     print("Benchmark complete.")
     return times.cpu().numpy(), scales
