@@ -13,7 +13,7 @@ from magpy.file_io.spline_file import SplineFile
 from magpy.file_io.systematic_file import SystematicFile, SystematicHandler
 from magpy.utils.modes import SplineModes, bins_to_spline_name
 from magpy.objects.mc_event import MCEventMonolith, MCEventIndices
-from magpy.objects.spline_handler import SplineMonolith
+from magpy.objects.spline_handler import Spline
 
 @jax.jit
 def _reweight_jit(
@@ -46,6 +46,9 @@ class SplineSystematicModel:
         """
         out_list = []
         self._bins_handler = self.spline_file.get_bin_handler()
+        self._norm_indices = []
+        self._spline_indices = []
+        self._norm_systematics = {}  # Track normalization systematics: {syst_idx: {mode: norm_spline}}
 
         # Get inidices
         self.SYST_INDEX = 0
@@ -58,23 +61,45 @@ class SplineSystematicModel:
             desc="Processing systematics",
             total=len(self.systematic_handler.systematics)
         ):
-            for mode in syst.modes:
-                mode_name = SplineModes(mode).spline_name()
-                for bins in self._bins_handler.bin_indices:
-                    spline_name = bins_to_spline_name(
-                        syst.spline_name, mode_name, bins.tolist()
-                    )
-                    # Get spline
-                    try:
-                        spline_idx = self.spline_file.spline_names.index(spline_name)
-                        output = [isyst, spline_idx, mode]
-                        output.extend(bins.tolist())
-                        out_list.append(output)
-                    except ValueError:
-                        # Spline not found, skip
-                        continue
+                
+                for mode in syst.modes:
+                    mode_name = SplineModes(mode).spline_name()
+                    if syst.syst_type == "spline":
+                        for bins in self._bins_handler.bin_indices:
+                            spline_name = bins_to_spline_name(
+                                syst.spline_name, mode_name, bins.tolist()
+                            )
+                            # Get spline
+                            try:
+                                spline_idx = self.spline_file.spline_names.index(spline_name)
+                                output = [isyst, spline_idx, mode]
+                                output.extend(bins.tolist())
+                                out_list.append(output)
+                            except ValueError:
+                                # Spline not found, skip
+                                continue
+                    if syst.syst_type == "norm":
+                        # For normalization: create one spline per mode, not per bin
+                        if isyst not in self._norm_systematics:
+                            self._norm_systematics[isyst] = {}
                         
+                        if mode not in self._norm_systematics[isyst]:
+                            # Create a single normalization spline for this mode
+                            norm_spl = Spline(
+                                x=jnp.array([syst.range[0], syst.range[1]], dtype=jnp.float64), 
+                                y=jnp.array([syst.range[0], syst.range[1]], dtype=jnp.float64)
+                            )
+                            spline_idx = len(self._spline_monolith)
+                            self._spline_monolith.add_spline(norm_spl)
+                            self._norm_systematics[isyst][mode] = spline_idx
+                        
+                        # DON'T add to out_list - we'll handle norms separately
+
+                
+                                            
+        self._norm_indices = jnp.array(self._norm_indices, dtype=jnp.int64)
         self._index_tensor = jnp.array(out_list, dtype=jnp.int64)
+        
         self._spline_monolith.map_splines_to_syst(self._index_tensor[:,self.SYST_INDEX:self.SPLINE_INDEX+1])
         
 
@@ -84,6 +109,9 @@ class SplineSystematicModel:
         """Find ALL splines for each event - supporting multiple splines per event.
         Each event can have multiple splines (one per systematic) and we multiply their weights.
         """
+        # Store for later use in normalization
+        self._mc_event_monolith = mc_event_monolith
+        
         use_dummy = MCEventIndices.DUMMY.value in bin_indices
 
         self._bins = jnp.concatenate([jnp.array([MCEventIndices.INTERACTION_MODE.value]), bin_indices], axis=0)
@@ -154,12 +182,12 @@ class SplineSystematicModel:
         return spline_indices_only  # Return for compatibility
 
     def get_weights_only(self, syst_values: jnp.ndarray) -> jnp.ndarray:
-        """Get systematic weights for all events - OPTIMIZED: multiply weights from ALL splines per event"""
-        # Evaluate spline weights for all splines
-        spline_weights = self._spline_monolith(syst_values)
+        """Get systematic weights for all events - OPTIMIZED: multiply weights from ALL splines per event + normalization per mode"""
+        # Evaluate spline weights for all splines (including norm splines) - SINGLE EVALUATION
+        all_spline_weights = self._spline_monolith(syst_values)
         
-        # Get weights for all event-spline pairs
-        pair_weights = spline_weights[self._event_spline_pairs[:, 1]]
+        # Get weights for all event-spline pairs (regular splines only)
+        pair_weights = all_spline_weights[self._event_spline_pairs[:, 1]]
         
         # HIGHLY OPTIMIZED: Use scatter_mul for direct multiplication 
         n_total_events = jnp.max(self._event_spline_pairs[:, 0]) + 1
@@ -171,8 +199,32 @@ class SplineSystematicModel:
         event_ids = self._event_spline_pairs[:, 0]
         final_weights = final_weights.at[event_ids].multiply(pair_weights)
         
-        # Return weights only for events that have splines (valid events)
-        return final_weights[self._valid_events]
+        # Apply normalization weights per mode (much more efficient!)
+        event_weights_valid = final_weights[self._valid_events]
+        
+        return self._apply_normalization_weights(event_weights_valid, all_spline_weights)
+
+    def _apply_normalization_weights(self, event_weights: jnp.ndarray, all_spline_weights: jnp.ndarray) -> jnp.ndarray:
+        """Apply normalization weights efficiently per interaction mode"""
+        if not self._norm_systematics:
+            return event_weights
+        
+        # Get interaction modes for valid events
+        event_modes = self._mc_event_monolith.monolith[self._valid_events, MCEventIndices.INTERACTION_MODE.value]
+        
+        # Apply normalization for each systematic (reuse already computed spline weights)
+        norm_weights = jnp.ones_like(event_weights)
+        
+        for syst_idx, mode_splines in self._norm_systematics.items():
+            for mode, spline_idx in mode_splines.items():
+                # Get normalization weight for this mode from the already evaluated splines
+                norm_weight = all_spline_weights[spline_idx]
+                
+                # Apply to all events of this mode
+                mode_mask = event_modes == mode
+                norm_weights = norm_weights.at[mode_mask].multiply(norm_weight)
+        
+        return event_weights * norm_weights
 
     def reweight(self, syst_values: jnp.ndarray, monolith: jnp.ndarray) -> jnp.ndarray:
         """MULTI-SPLINE REWEIGHTING: Multiply weights from all splines affecting each event"""

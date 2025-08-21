@@ -38,3 +38,11 @@ Systematics:
     nominal: 1.0
     error: 0.1
     syst_type: "spline"
+
+  - syst_name: mysyst5
+    spline_name: mysyst5
+    range: [0, 999]
+    modes: [1]
+    nominal: 1.0
+    error: 0.1
+    syst_type: "norm"

@@ -1,4 +1,4 @@
-from typing import List, NamedTuple, Optional
+from typing import List, Optional
 from dataclasses import dataclass, replace
 
 import jax
@@ -125,6 +125,21 @@ def init_monolith(splines: List[SplineData], spline_syst_map: jnp.ndarray) -> Mo
         syst_spline_indices = syst_spline_indices.at[i, :count].set(splines_for_par)
         flat_par_knots.append(knot_sequences[splines_for_par[0]])
 
+    # Pad knot sequences to the same length for stacking
+    if flat_par_knots:
+        max_knots = max(len(knots) for knots in flat_par_knots)
+        padded_knots = []
+        for knots in flat_par_knots:
+            # Pad with the last knot value to avoid issues with searchsorted
+            if len(knots) < max_knots:
+                padding = jnp.full(max_knots - len(knots), knots[-1])
+                padded_knots.append(jnp.concatenate([knots, padding]))
+            else:
+                padded_knots.append(knots)
+        flat_par_knots_array = jnp.stack(padded_knots)
+    else:
+        flat_par_knots_array = jnp.array([])
+
     return MonolithState(
         n_splines=n_splines,
         flat_mask=flat_mask,
@@ -136,7 +151,8 @@ def init_monolith(splines: List[SplineData], spline_syst_map: jnp.ndarray) -> Mo
         par_spline_starts=syst_spline_indices,  # Reuse this field for the padded matrix
         par_spline_counts=syst_spline_counts,
         flat_par_splines=jnp.array([]),  # No longer needed
-        flat_par_knots=jnp.stack(flat_par_knots),
+        
+        flat_par_knots=flat_par_knots_array,
         knot_indices=jnp.zeros(n_splines, dtype=jnp.int64),
         par_arr=jnp.zeros(n_splines, dtype=jnp.float64),
         weights=jnp.ones(n_splines, dtype=jnp.float64),
@@ -225,8 +241,15 @@ class SplineMonolith:
         self._splines = [s.data for s in splines]
         self._state: Optional[MonolithState] = None  # Will be initialized in map_splines_to_syst
 
+    def add_spline(self, new_spline: Spline):
+        self._splines.append(new_spline.data)
+
     def map_splines_to_syst(self, spline_syst_map: jnp.ndarray):
+        # Need to make normalisation splines
         self._state = init_monolith(self._splines, spline_syst_map)
+    
+    def __len__(self):
+        return self._state.n_splines if self._state is not None else len(self._splines)
 
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         if self._state is not None and self._state.spline_syst_map is not None:
