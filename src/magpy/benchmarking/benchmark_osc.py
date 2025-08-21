@@ -3,41 +3,24 @@ from pathlib import Path
 from matplotlib import pyplot as plt
 import numpy as np
 from rich import print
-import torch
 from cProfile import Profile
 from pstats import Stats
 
 from tqdm import tqdm
 from magpy.oscillator.oscillator import Oscillator
-from magpy.utils.device_manager import DeviceManager
+import jax.numpy as jnp
 from magpy.oscillator.nu_types import NuType   
 
 def benchmark_osc(n_iter: int = 50, n_scales: int = 100000, points: int = 100):
 
-    device = DeviceManager().get_device()
-    osc_pars = torch.tensor(
+    osc_pars = jnp.array(
         [0.3, 0.02, 0.55, 0.7 * np.pi, 7.5e-5, 2.5e-3],
-        dtype=torch.float64,
-        device=device,
+        dtype=jnp.float64,
     )
 
     scales = np.arange(n_scales // points, n_scales, n_scales // points)
 
-    times = torch.zeros((n_iter, len(scales)), dtype=torch.float64, device=device)
-
-    osc_in_tmp = torch.tensor(
-        np.random.choice([12, 14, 16], size=10),
-        dtype=torch.int64,
-        device=device,
-    )
-    osc_out_tmp = torch.tensor(
-        np.random.choice([12, 14, 16], size=10),
-        dtype=torch.int64,
-        device=device,
-    )
-    energies_tmp = torch.tensor(
-        np.linspace(0.1, 10, 10), dtype=torch.float64, device=device
-    )  # Example energy range
+    times = np.zeros((n_iter, len(scales)), dtype=jnp.float64)
 
     # Warm up to ensure compilation of everything etc.
 
@@ -51,31 +34,25 @@ def benchmark_osc(n_iter: int = 50, n_scales: int = 100000, points: int = 100):
             # Silly but helps
             if j == 0:
                 print("Burning a few cycles in...")
-                for i in range(100):
-                    oscillator_tmp = Oscillator(1300, 0.5, 3, 0)
-                    oscillator_tmp.set_energy_osc(energies_tmp, osc_in_tmp, osc_out_tmp)
-                    oscillator_tmp.calc_probability(osc_pars)
-
-            osc_in = torch.tensor(
+            osc_in = jnp.array(
                 np.random.choice(
                     [NuType.ELECTRON.value, NuType.MUON.value, NuType.TAU.value], size=event_scale
                 ),
-                dtype=torch.int64,
-                device=device,
+                dtype=jnp.int64,
             )
-            osc_out = torch.tensor(
+            osc_out = jnp.array(
                 np.random.choice(
                     [NuType.ELECTRON.value, NuType.MUON.value, NuType.TAU.value], size=event_scale
                 ),
-                dtype=torch.int64,
-                device=device,
+                dtype=jnp.int64,
             )
-            energies = torch.tensor(
-                np.linspace(0.1, 10, event_scale), dtype=torch.float64, device=device
+            energies = jnp.array(
+                np.linspace(0.1, 10, event_scale), dtype=jnp.float64
             )  # Example energy range
 
             oscillator = Oscillator(1300, 0.5, 3, 0)
             oscillator.set_energy_osc(energies, osc_in, osc_out)
+            oscillator.calc_probability(osc_pars)
 
             
             for i in range(n_iter):
@@ -92,7 +69,7 @@ def benchmark_osc(n_iter: int = 50, n_scales: int = 100000, points: int = 100):
         Stats(pr).strip_dirs().sort_stats("cumulative").print_stats()
 
     print("Benchmark complete.")
-    return times.cpu().numpy(), scales
+    return times, scales
 
 
 def plot_scaling(times: np.ndarray, scales: np.ndarray, plot_file="osc_scaling.png"):

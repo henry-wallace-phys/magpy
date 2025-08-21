@@ -15,43 +15,17 @@ from magpy.utils.modes import SplineModes, bins_to_spline_name
 from magpy.objects.mc_event import MCEventMonolith, MCEventIndices
 from magpy.objects.spline_handler import SplineMonolith
 
-
 @jax.jit
 def _reweight_jit(
     monolith: jnp.ndarray, 
-    spline_weights: jnp.ndarray,
-    event_to_spline_map: jnp.ndarray, 
-    valid_event_indices: jnp.ndarray
+    combined_event_weights: jnp.ndarray,
+    valid_events: jnp.ndarray
 ) -> jnp.ndarray:
-    """JIT-compiled reweighting function for ultra-fast performance"""
-    # Get weights for valid events
-    event_weights = spline_weights[event_to_spline_map]
-    
-    # Apply weights only to valid events
-    monolith = monolith.at[valid_event_indices, MCEventIndices.WEIGHT.value].multiply(event_weights)
+    """JIT-compiled reweighting function for ultra-fast performance with multi-spline events"""
+    # Apply combined weights to valid events
+    monolith = monolith.at[valid_events, MCEventIndices.WEIGHT.value].multiply(combined_event_weights)
     
     return monolith
-
-
-@jax.jit
-def _extreme_reweight_fusion(
-    monolith: jnp.ndarray,
-    spline_weights: jnp.ndarray,
-    event_to_spline_map: jnp.ndarray,
-    valid_event_indices: jnp.ndarray,
-    original_weights: jnp.ndarray
-) -> jnp.ndarray:
-    """EXTREME: Fused reweighting with memory optimization for sub-ms performance"""
-    
-    # Compute all event weights in one vectorized operation
-    event_weights = spline_weights[event_to_spline_map]
-    
-    # Fused weight computation: multiply original weights by spline weights
-    new_weights = original_weights * event_weights
-    
-    # Single vectorized assignment to monolith
-    return monolith.at[valid_event_indices, MCEventIndices.WEIGHT.value].set(new_weights)
-
 
 class SplineSystematicModel:
 
@@ -61,8 +35,10 @@ class SplineSystematicModel:
             self.systematic_handler = systematics.systematic_handler
         else:
             self.systematic_handler = systematics
+        self._spline_monolith = self.spline_file.monolith
         self.setup_splines()
         self._spline_idx_monolith = None
+
 
     def setup_splines(self):
         """Setup the splines from the spline file.
@@ -99,15 +75,15 @@ class SplineSystematicModel:
                         continue
                         
         self._index_tensor = jnp.array(out_list, dtype=jnp.int64)
-        self.spline_file.monolith.map_splines_to_syst(self._index_tensor[:,self.SYST_INDEX:self.SPLINE_INDEX+1])
+        self._spline_monolith.map_splines_to_syst(self._index_tensor[:,self.SYST_INDEX:self.SPLINE_INDEX+1])
         
-        # Initialize extreme optimization flags
-        self._use_extreme_fusion = False
 
     def get_monolith_splines(
         self, mc_event_monolith: MCEventMonolith, bin_indices: jnp.ndarray
     ) -> jnp.ndarray:
-        """Find the bin for each event in the monolith, bins must be in order x,y,z,..."""
+        """Find ALL splines for each event - supporting multiple splines per event.
+        Each event can have multiple splines (one per systematic) and we multiply their weights.
+        """
         use_dummy = MCEventIndices.DUMMY.value in bin_indices
 
         self._bins = jnp.concatenate([jnp.array([MCEventIndices.INTERACTION_MODE.value]), bin_indices], axis=0)
@@ -152,89 +128,59 @@ class SplineSystematicModel:
             axis=2
         )
         
-        # Find first matching spline for each event (-1 if no match)
-        # Shape: (n_events,)
-        self._event_to_spline_map = jnp.where(
-            jnp.any(matches, axis=1),  # Has any match
-            jnp.argmax(matches, axis=1),  # Index of first match
-            -1  # No match found
-        )
-
-        # Remove events that don't have matching splines
-        valid_mask = self._event_to_spline_map >= 0
-        self._event_to_spline_map = self._event_to_spline_map[valid_mask]
-        self._valid_event_indices = jnp.where(valid_mask)[0]
+        # NEW ARCHITECTURE: Store ALL matching splines per event, not just the first one
+        # We'll create a sparse representation of event -> spline mappings
+        
+        # Find all (event_idx, spline_idx) pairs where there's a match
+        event_indices, spline_indices = jnp.where(matches)
+        
+        # Store the mapping: each entry is (event_idx, spline_idx)
+        self._event_spline_pairs = jnp.column_stack([event_indices, spline_indices])
+        
+        # For each event, we need to know which entries in _event_spline_pairs belong to it
+        # Sort by event index to group splines by event
+        sort_indices = jnp.argsort(event_indices)
+        self._event_spline_pairs = self._event_spline_pairs[sort_indices]
+        
+        # Get unique events (those that have at least one spline)
+        self._valid_events = jnp.unique(self._event_spline_pairs[:, 0])
+        
+        # For compatibility, store the spline indices
+        spline_indices_only = self._event_spline_pairs[:, 1]
         
         # Saves rebuilding every loop
         self._spline_value_arr = jnp.zeros(len(self._index_tensor), dtype=jnp.float64)
-        return self._event_to_spline_map
+        
+        return spline_indices_only  # Return for compatibility
+
+    def get_weights_only(self, syst_values: jnp.ndarray) -> jnp.ndarray:
+        """Get systematic weights for all events - OPTIMIZED: multiply weights from ALL splines per event"""
+        # Evaluate spline weights for all splines
+        spline_weights = self._spline_monolith(syst_values)
+        
+        # Get weights for all event-spline pairs
+        pair_weights = spline_weights[self._event_spline_pairs[:, 1]]
+        
+        # HIGHLY OPTIMIZED: Use scatter_mul for direct multiplication 
+        n_total_events = jnp.max(self._event_spline_pairs[:, 0]) + 1
+        
+        # Start with all ones, then multiply in the weights for each event
+        final_weights = jnp.ones(n_total_events, dtype=jnp.float64)
+        
+        # Use scatter multiplication - this is the most efficient approach
+        event_ids = self._event_spline_pairs[:, 0]
+        final_weights = final_weights.at[event_ids].multiply(pair_weights)
+        
+        # Return weights only for events that have splines (valid events)
+        return final_weights[self._valid_events]
 
     def reweight(self, syst_values: jnp.ndarray, monolith: jnp.ndarray) -> jnp.ndarray:
-        """EXTREME OPTIMIZATION: Sub-millisecond reweighting with memory pre-allocation"""
-        
-        # Try extreme fused path first
-        if hasattr(self, '_use_extreme_fusion') and self._use_extreme_fusion:
-            try:
-                # Pre-extract original weights to avoid repeated array access
-                original_weights = monolith[self._valid_event_indices, MCEventIndices.WEIGHT.value]
-                
-                # Evaluate spline weights
-                spline_weights = self.spline_monolith(syst_values)
-                
-                # Use extreme fused reweighting
-                return _extreme_reweight_fusion(
-                    monolith, 
-                    spline_weights,
-                    self._event_to_spline_map, 
-                    self._valid_event_indices,
-                    original_weights
-                )
-            except Exception:
-                # Fallback to standard method if extreme fails
-                pass
-        
-        # Standard ultra-fast reweighting path
-        # Evaluate spline weights outside of JIT (since SplineMonolith isn't JIT-compatible)
-        spline_weights = self.spline_monolith(syst_values)
+        """MULTI-SPLINE REWEIGHTING: Multiply weights from all splines affecting each event"""
+        # Get combined weights for all events (already multiplied together per event)
+        combined_event_weights = self.get_weights_only(syst_values)
         
         return _reweight_jit(
             monolith, 
-            spline_weights,
-            self._event_to_spline_map, 
-            self._valid_event_indices
+            combined_event_weights,
+            self._valid_events
         )
-
-    def enable_extreme_fusion(self):
-        """Enable extreme fusion optimizations for sub-ms performance"""
-        self._use_extreme_fusion = True
-        
-        # Pre-compile extreme fusion function
-        if hasattr(self, '_valid_event_indices') and len(self._valid_event_indices) > 0:
-            try:
-                dummy_monolith = jnp.ones((10, 10))
-                dummy_spline_weights = jnp.ones(5)
-                dummy_event_map = jnp.array([0, 1, 2])
-                dummy_indices = jnp.array([0, 1, 2])
-                dummy_weights = jnp.ones(3)
-                
-                # Pre-compile fusion function
-                _ = _extreme_reweight_fusion(
-                    dummy_monolith, dummy_spline_weights, 
-                    dummy_event_map, dummy_indices, dummy_weights
-                )
-            except Exception:
-                self._use_extreme_fusion = False
-        else:
-            self._use_extreme_fusion = False
-
-    @property
-    def index_tensor(self) -> jnp.ndarray:
-        return self._index_tensor
-
-    @property
-    def spline_monolith(self) -> SplineMonolith:
-        return self.spline_file.monolith
-
-    @property
-    def mc_indices(self) -> jnp.ndarray:
-        return self._event_to_spline_map

@@ -5,6 +5,8 @@ from pathlib import Path
 from cProfile import Profile
 from pstats import Stats
 
+
+from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
 import jax.numpy as jnp
@@ -63,10 +65,12 @@ def benchmark_reweight(n_iter: int = 50):
     syst_vals = jnp.array([1.1, 1.1, 1.1, 1.1, 1.1])
 
     times = np.zeros(n_iter)
+    # Reweight once to compile
+    handler.reweight(osc_reweight, syst_vals)
 
     with Profile() as pr:
         pr.disable()
-        for i in range(n_iter):
+        for i in (pbar:=tqdm(range(n_iter))):
             osc_mod = osc_reweight.clone() * (
                     1.0001 + (np.random.uniform(0, 1) / (n_iter * 100))
                 )
@@ -74,13 +78,18 @@ def benchmark_reweight(n_iter: int = 50):
             syst_mod = syst_vals.clone() * (
                     1.0001 + (np.random.uniform(0, 1) / (n_iter * 100))
                 )
-
+            
             
             pr.enable()
             start = time.time()
             handler.reweight(osc_mod, syst_mod)
             times[i] = time.time() - start
             pr.disable()
+            
+            
+            if i>10:
+                pbar.set_description(f"Reweighting iteration {i+1}/{n_iter}, Time: {np.mean(times[:i]):.4f}s")
+            
         Stats(pr).strip_dirs().sort_stats("cumulative").print_stats()
 
     print(f"Average time per iteration: {np.mean(times[2:]):.6f} seconds")

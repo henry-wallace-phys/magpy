@@ -2,27 +2,34 @@
 Simplified JAX-based oscillator for performance testing.
 Focus on vectorization without complex control flow.
 """
+from functools import partial
 
 import jax
 import jax.numpy as jnp
-from jax import jit
-import numpy as np
+from functools import partial
 from magpy.Exceptions import MagpyProbabilityException
 
 # Enable 64-bit precision
-jax.config.update("jax_enable_x64", True)
-@jit
+# @jax.jit
 def _simplified_oscillation_jax(
     energies: jnp.ndarray,
     osc_in: jnp.ndarray,
     osc_out: jnp.ndarray,
-    s12sq: float, s13sq: float, s23sq: float, delta_cp: float, dmsq21: float, dmsq31: float,
+    osc_params: jnp.ndarray,  # [s12sq, s13sq, s23sq, delta_cp, dmsq21, dmsq31]
     L: float, ye: float, rho: float
 ) -> jnp.ndarray:
     """
     Simplified JAX implementation focusing on core vectorized calculations.
     No Newton iterations for now to avoid JAX compilation issues.
     """
+    
+    # Extract oscillation parameters from array
+    s12sq = osc_params[0]
+    s13sq = osc_params[1] 
+    s23sq = osc_params[2]
+    delta_cp = osc_params[3]
+    dmsq21 = osc_params[4]
+    dmsq31 = osc_params[5]
     
     # Constants
     eVsqkm_to_GeV_over4 = 1e-9 / 1.97327e-7 * 1e3 / 4
@@ -202,7 +209,6 @@ class Oscillator:
         self._setup = False
         
         # Pre-compile the core function
-        self._compiled_calc = jit(_simplified_oscillation_jax)
     
     def set_energy_osc(self, energies, osc_in, osc_out):
         """Set energy and oscillation channel arrays"""
@@ -217,23 +223,18 @@ class Oscillator:
             )
         
         self._setup = True
-    
+        self._compiled_calc = jax.jit(partial(_simplified_oscillation_jax, self._energies, self._osc_in, self._osc_out, L=self.L, ye=self.ye, rho=self.rho))
+
+
     def calc_probability(self, osc_params) -> jnp.ndarray:
         """Calculate oscillation probabilities using simplified JAX implementation"""
         if not self._setup:
             raise MagpyProbabilityException("Oscillator not set up. Please call set_energy_osc() first.")
         
-        # Convert parameters to JAX format
+        # Convert to JAX array once and pass directly - no float conversion
         params_array = jnp.asarray(osc_params, dtype=jnp.float64)
         
-        # Extract parameters
-        s12sq, s13sq, s23sq, delta_cp, dmsq21, dmsq31 = params_array
-        
-        # Call the fully compiled and vectorized calculation
-        results = self._compiled_calc(
-            self._energies, self._osc_in, self._osc_out,
-            float(s12sq), float(s13sq), float(s23sq), float(delta_cp), float(dmsq21), float(dmsq31),
-            self.L, self.ye, self.rho
-        )
+        # Call the fully compiled and vectorized calculation with JAX array
+        results = self._compiled_calc(params_array)
         
         return results

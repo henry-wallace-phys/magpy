@@ -75,20 +75,26 @@ class SampleModel:
     def reweight(self, osc_pars: jnp.ndarray, syst_pars: jnp.ndarray) -> jnp.ndarray:
         """
         Reweight the MC events based on the spline systematics using JAX.
+        ULTRA-OPTIMIZED: Zero intermediate scatter operations for maximum speed.
         """
         if self._mc_indices is None:
             raise MagpyInvalidObjectError("MC indices not initialised. Please initialise MC indices before reweighting.")
         
-        # Reset weights to 1.0 - create new array instead of in-place modification
-        monolith = self.mc_monolith.at[:, MCEventIndices.WEIGHT.value].set(1.0)
-        
-        # Calculate oscillation probabilities
+        # Calculate oscillation probabilities for all events
         osc_weights = self.oscillator.calc_probability(osc_params=osc_pars)
         
-        # Apply oscillation weights
-        monolith = monolith.at[:, MCEventIndices.WEIGHT.value].set(osc_weights)
+        # Get systematic weights for valid events only (already combined per event)
+        systematic_weights_partial = self.spline_syst_handler.get_weights_only(syst_pars)
         
-        # Apply systematic reweighting
-        monolith = self.spline_syst_handler.reweight(syst_pars, monolith)
+        # MULTI-SPLINE OPTIMIZATION: Work with valid events that have systematic corrections
+        # Start with oscillation weights
+        final_weights = osc_weights.copy()
+        
+        # Apply systematic weights only to valid events (events with splines)
+        valid_events = self.spline_syst_handler._valid_events
+        final_weights = final_weights.at[valid_events].multiply(systematic_weights_partial)
+        
+        # SINGLE scatter operation to monolith - maximum efficiency!
+        monolith = self.mc_monolith.at[:, MCEventIndices.WEIGHT.value].set(final_weights)
  
         return monolith

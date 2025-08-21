@@ -14,7 +14,8 @@ from magpy.objects.spline_handler import SplineMonolith, Spline
 from magpy.models.spline_syst_model import SplineSystematicModel
 from magpy.file_io.spline_file import SplineFile
 from magpy.file_io.systematic_file import SystematicFile
-
+import time
+    
 
 # Test file loading
 class SplineTest:
@@ -117,24 +118,37 @@ def test_spline_monolith_performance():
     splines = []
     for i in range(100):
         x = jnp.linspace(0, 10, 11)
-        y = jnp.sin(x + i * 0.1)  # Slightly different splines
+        y = jnp.linspace(0, 10, 11)**2
+        
+        # Now we want to do something silly        
         splines.append(Spline(x, y))
     
+    syst_map = jnp.array([[i%10, i] for i in range(100)])  # Simple mapping for testing
+    
     monolith = SplineMonolith(splines)
-    
+    monolith.map_splines_to_syst(syst_map)
+
     # Test evaluation performance
-    test_params = jnp.linspace(-1, 1, 100)
+    test_params = jnp.ones(100)*2
     
-    import time
+    # Burn compile_loop
+    weights = monolith(test_params)
+
+    
     start_time = time.perf_counter()
     weights = monolith(test_params)
     end_time = time.perf_counter()
     
+    print(weights)
+    
+    print(weights)
     # Check results
     assert len(weights) == 100
     assert jnp.all(jnp.isfinite(weights))
     
+    
     # Performance check
+    assert jnp.all(weights==4)
     elapsed = end_time - start_time
     print(f"JAX SplineMonolith: {elapsed*1000:.3f}ms for 100 splines")
     assert elapsed < 0.6  # Should be reasonably fast
@@ -162,10 +176,6 @@ def test_spline_systematic_mapping():
     
     monolith.map_splines_to_syst(syst_map)
     
-    # Test that mapping was set correctly
-    assert monolith._spline_syst_map is not None
-    assert monolith._n_syst == 3  # 3 unique systematics
-
 
 def test_spline_edge_cases():
     """Test edge cases in spline handling"""

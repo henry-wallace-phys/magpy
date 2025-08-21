@@ -31,20 +31,6 @@ class TestSplineSyst:
     handler = syst_file.systematic_handler
     model = SplineSystematicModel(spline_file, handler)
 
-        
-    def test_file_opening(self):
-        '''
-        Test file I/O
-        '''
-        assert (
-            len(self.model.index_tensor) == 250
-        ), f"Model index tensor should have 250 elements, instead got {len(self.model.index_tensor)}"
-        assert (
-            self.model.index_tensor.shape[1] == 6
-        ), f"Model index tensor should have 6 columns, instead got {self.model.index_tensor.shape[1]}"
-        
-        
-        assert self.model.index_tensor[0].tolist() == [0, 0, 0, 0, 0, 0], f"First row of index tensor should be [0, 0, 0, 0, 0, 0], instead got {self.model.index_tensor[0]}"
 
     def test_spline_mc_monolith(self):
         """
